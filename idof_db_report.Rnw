@@ -1,0 +1,84 @@
+\documentclass{article}
+
+
+
+\usepackage[portrait, headheight = 0cm, margin=0.25cm, top = 0.25cm, nofoot]{geometry} 
+\usepackage[export]{adjustbox} 
+\usepackage{graphicx}
+\usepackage[dvipsnames,table]{xcolor} % [dvipsnames,table] for setting colors \usepackage{amsmath} \usepackage{xfrac}
+\usepackage{tikz}
+\usetikzlibrary{shapes.geometric}
+\usetikzlibrary{shapes.misc}
+%\usetikzlibrary{external}
+%\tikzexternalize % activate!
+%\usepackage{sparklines}
+\usepackage{xfrac}
+\usepackage[space]{grffile}
+
+\DeclareRobustCommand\Tstrut{\rule{0pt}{2.6ex}}         % = `top' strut
+\DeclareRobustCommand\Bstrut{\rule[-0.9ex]{0pt}{0pt}}   % = `bottom' strut
+\renewcommand{\familydefault}{\sfdefault}
+
+\begin{document}
+
+
+<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
+# this chunk is common to all child documents
+require(Hmisc)
+require(stringi)
+require(digest)
+require(scales)
+require(data.table)
+require(Matrix)
+require(Matrix.utils)
+require(clue)
+require(magick)
+require(readxl)
+require(Rtsne)
+require(knitr)
+require(magrittr)
+require(gsubfn)
+require(FRAPO)
+require(ggplot2)
+
+config<-new.env()
+source(
+  file="https://raw.githubusercontent.com/satrapade/pairs/master/configuration/workflow_config.R",
+  local=config
+)
+source("https://raw.githubusercontent.com/satrapade/pairs/master/utility/fetch_risk_report.R")
+source("https://raw.githubusercontent.com/satrapade/pairs/master/utility/append2log.R")
+source("https://raw.githubusercontent.com/satrapade/pairs/master/utility/log_code.R")
+source("https://raw.githubusercontent.com/satrapade/utility/master/ticker_class.R")
+
+if(!exists("append2log"))knitr::knit_exit() 
+if(!exists("log_code"))knitr::knit_exit() 
+
+#append2log("pair_risk_contribution: start",append=TRUE)
+
+source("https://raw.githubusercontent.com/satrapade/latex_utils/master/latex_helpers_v2.R")
+source("https://raw.githubusercontent.com/satrapade/pairs/master/utility/volatility_trajectory.R")
+source("https://raw.githubusercontent.com/satrapade/utility/master/nn_cast.R")
+
+@
+
+
+
+\section*{Document version}
+
+\vskip 5mm
+
+\begin{center}
+\begin{tabular}{l l}
+\hline
+timestamp & \Sexpr{latexTranslate(as.character(Sys.timeDate()))} \\
+data and code checksum & \Sexpr{digest(dataset)} \\
+git id & \Sexpr{system("git rev-parse HEAD",TRUE)} \\
+user & \Sexpr{latexTranslate(gsub("\\\\","/",system("whoami",TRUE)))} \\
+\hline
+\end{tabular}
+\end{center}
+
+
+\end{document}
+

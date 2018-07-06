@@ -20,51 +20,296 @@
 \renewcommand{\familydefault}{\sfdefault}
 
 \begin{document}
-
-
 <<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
 # this chunk is common to all child documents
-require(Hmisc)
 require(stringi)
-require(digest)
 require(scales)
+require(digest)
+require(clue)
+require(FRAPO)
 require(data.table)
 require(Matrix)
 require(Matrix.utils)
-require(clue)
-require(magick)
-require(readxl)
-require(Rtsne)
-require(knitr)
 require(magrittr)
 require(gsubfn)
-require(FRAPO)
+require(Hmisc)
 require(ggplot2)
-
-config<-new.env()
-source(
-  file="https://raw.githubusercontent.com/satrapade/pairs/master/configuration/workflow_config.R",
-  local=config
-)
-source("https://raw.githubusercontent.com/satrapade/pairs/master/utility/fetch_risk_report.R")
-source("https://raw.githubusercontent.com/satrapade/pairs/master/utility/append2log.R")
-source("https://raw.githubusercontent.com/satrapade/pairs/master/utility/log_code.R")
-source("https://raw.githubusercontent.com/satrapade/utility/master/ticker_class.R")
-
-if(!exists("append2log"))knitr::knit_exit() 
-if(!exists("log_code"))knitr::knit_exit() 
-
-#append2log("pair_risk_contribution: start",append=TRUE)
-
-source("https://raw.githubusercontent.com/satrapade/latex_utils/master/latex_helpers_v2.R")
-source("https://raw.githubusercontent.com/satrapade/pairs/master/utility/volatility_trajectory.R")
-source("https://raw.githubusercontent.com/satrapade/utility/master/nn_cast.R")
+require(magick)
+require(DBI)
+require(readxl)
+require(Rblpapi)
+require(Rtsne)
+require(knitr)
 
 @
 
 
+\tableofcontents
 
-\section*{Document version}
+<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
+
+
+source("https://raw.githubusercontent.com/satrapade/latex_utils/master/latex_helpers_v2.R")
+source("https://raw.githubusercontent.com/satrapade/pairs/master/utility/volatility_trajectory.R")
+source("https://raw.githubusercontent.com/satrapade/utility/master/nn_cast.R")
+source("https://raw.githubusercontent.com/satrapade/utility/master/ticker_class.R")
+source("https://raw.githubusercontent.com/satrapade/pairs/master/utility/query.R")
+source("https://raw.githubusercontent.com/satrapade/pairs/master/sql_tools/make_query.R")
+
+rcon<-Rblpapi::blpConnect()
+
+# the multi-asset database
+dbma<-dbConnect(
+odbc::odbc(),
+.connection_string = paste0(
+"driver={SQL Server};",
+"server=SQLS071FP\\MULTIASSET;",
+"database=MultiAsset;",
+"trusted_connection=true"
+))
+
+# the performance database
+db<-dbConnect(
+odbc::odbc(), 
+.connection_string = paste0(
+"driver={SQL Server};",
+"server=SQLS071FP\\QST;",
+"database=PRDQSTFundPerformance;",
+"trusted_connection=true"
+))
+
+
+
+
+product<-make_query(
+product_id="3",
+query_string="
+SELECT *
+FROM tProduct
+WHERE ProductId=--R{product_id}--
+") %>%
+query %>%
+t %>%
+{data.table(field=rownames(.),value=.[,1])}
+
+
+holdings<-"
+SELECT 
+  SUBSTRING(CONVERT(varchar,tHistoricalProductHolding.HistoricalDate),1,10) AS date,
+  tHistoricalProductHolding.SecurityId AS security_id,
+  tSecurity.Name AS name,
+  tSecurityType.Name as security_type,
+  tSecurity.Ticker as ticker,
+  tSecurity.UniqueId as unique_id,
+  tHistoricalProductHolding.SecurityUnits AS units,
+  tHistoricalSecurity.UnitPrice AS unit_price,
+  tHistoricalSecurity.UnitAccruedIncome AS unit_accrued_income,
+  tSecurity.MaturityDate AS maturity,
+  tSecurity.ContractSize AS size,
+  tSecurity.ContractStrike AS strike,
+  tContractType.Name AS contract_type
+FROM tHistoricalProductHolding
+LEFT JOIN tSecurity 
+ON tSecurity.SecurityId = tHistoricalProductHolding.SecurityId
+LEFT JOIN tSecurityType 
+ON tSecurityType.SecurityTypeId = tSecurity.SecurityTypeId
+LEFT JOIN tHistoricalSecurity 
+ON tHistoricalSecurity.SecurityId = tSecurity.SecurityId
+AND tHistoricalSecurity.HistoricalDate = tHistoricalProductHolding.HistoricalDate
+AND tHistoricalSecurity.DataSourceId = 0
+LEFT JOIN tContractType
+ON tContractType.ContractTypeId = tSecurity.ContractTypeId
+WHERE tHistoricalProductHolding.ProductId=--R{product_id}--
+AND tHistoricalProductHolding.DataSourceId=--R{data_source_id}--
+" %>%
+{list(
+  query_string=.,
+  product_id="3",
+  data_source_id="1"
+)} %>%
+{do.call(make_query,.)} %>%
+query
+
+instrument_types<-table(holdings$security_type) %>%
+{data.table(type=names(.),count=as.integer(.))} %>%
+{.[order(-count)]}
+
+current_holdings<-holdings[date==max(date)]
+
+security_types<-sort(unique(current_holdings$security_type))
+
+latex_types<-mapply(function(s){
+  df<-current_holdings[security_type==s]
+  df_type<-mapply(class,df)
+  if(sum(df_type=="character")>0)for(i in which(df_type=="character")){
+    df[[i]]<-latexTranslate(df[[i]])
+  }
+  paste0(
+    paste0("\\subsection{",s,"}\n"),
+    "\\vskip 5mm",
+    ntable(
+      df=df[TRUE,.(
+        name=name,
+        ticker=ticker,
+        unique_id=unique_id,
+        units=units,
+        unit_price=unit_price,
+        unit_accrued_income=unit_accrued_income,
+        maturity=maturity,
+        size=size,
+        strike=strike,
+        contract_type=contract_type
+      )],
+      add_rownames = FALSE,
+      scale="0.5"
+    )
+  )
+},security_types)
+
+idof_buckets<-"
+SELECT 
+  tRootBucket.Name as root,
+  tLevel1Bucket.Name as level1_name,
+  tLevel1Bucket.BucketId as level1_id,
+  tLevel2Bucket.Name as level2_name,
+  tLevel2Bucket.BucketId as level2_id,
+  tLevel3Bucket.Name as level3_name,
+  tLevel3Bucket.BucketId as level3_id,
+  tLevel4Bucket.Name as level4_name,
+  tLevel4Bucket.BucketId as level4_id
+FROM tBucket AS tRootBucket
+LEFT JOIN tBucket AS tLevel1Bucket
+ON  tLevel1Bucket.ParentBucketId = tRootBucket.BucketId 
+LEFT JOIN tBucket AS tLevel2Bucket
+ON  tLevel2Bucket.ParentBucketId = tLevel1Bucket.BucketId
+LEFT JOIN tBucket AS tLevel3Bucket
+ON  tLevel3Bucket.ParentBucketId = tLevel2Bucket.BucketId 
+LEFT JOIN tBucket AS tLevel4Bucket
+ON  tLevel4Bucket.ParentBucketId = tLevel3Bucket.BucketId 
+WHERE tRootBucket.Name='MagBucket'
+" %>%
+{list(
+  query_string=.
+)} %>%
+{do.call(make_query,.)} %>%
+query
+
+bucket_holdings<-"
+SELECT 
+  SUBSTRING(CONVERT(varchar,tHistoricalBucketHolding.HistoricalDate),1,10) AS date,
+  tBucket.Name AS bucket,
+  tHistoricalBucketHolding.SecurityId AS security_id,
+  tSecurity.Name AS name,
+  tSecurityType.Name as security_type,
+  tSecurity.Ticker as ticker,
+  tSecurity.UniqueId as unique_id,
+  tHistoricalBucketHolding.SecurityUnits AS units,
+  tHistoricalSecurity.UnitPrice AS unit_price,
+  tHistoricalSecurity.UnitAccruedIncome AS unit_accrued_income,
+  tSecurity.MaturityDate AS maturity,
+  tSecurity.ContractSize AS size,
+  tSecurity.ContractStrike AS strike,
+  tContractType.Name AS contract_type
+FROM tHistoricalBucketHolding
+LEFT JOIN tBucket
+ON tBucket.BucketId = tHistoricalBucketHolding.BucketId
+LEFT JOIN tSecurity 
+ON tSecurity.SecurityId = tHistoricalBucketHolding.SecurityId
+LEFT JOIN tSecurityType 
+ON tSecurityType.SecurityTypeId = tSecurity.SecurityTypeId
+LEFT JOIN tHistoricalSecurity 
+ON tHistoricalSecurity.SecurityId = tSecurity.SecurityId
+AND tHistoricalSecurity.HistoricalDate = tHistoricalBucketHolding.HistoricalDate
+AND tHistoricalSecurity.DataSourceId = 0
+LEFT JOIN tContractType
+ON tContractType.ContractTypeId = tSecurity.ContractTypeId
+WHERE tHistoricalBucketHolding.ProductId=3
+AND tHistoricalBucketHolding.DataSourceId=1
+AND tHistoricalBucketHolding.BucketId IN --R{level4_idof_buckets}--
+" %>%
+{list(
+  query_string=.,
+  level4_idof_buckets=paste0("(",paste0(idof_buckets$level4_id,collapse=","),")")
+)} %>%
+{do.call(make_query,.)} %>%
+query
+
+current_bucket_holdings<-bucket_holdings[date==max(date)]
+
+latex_buckets<-mapply(function(s){
+  cat(s,"\n")
+  df<-current_bucket_holdings[bucket==s]
+  df_type<-mapply(class,df)
+  if(sum(df_type=="character")>0)for(i in which(df_type=="character")){
+    df[[i]]<-latexTranslate(df[[i]])
+  }
+  underlying_security<-query(make_query(
+    security_id=paste0("(",paste0(df[TRUE,unique(security_id)],collapse=","),")"),
+    query_string = "
+      SELECT 
+        tSecurity.UnderlyingSecurityId as underlying
+      FROM tSecurity
+      WHERE tSecurity.SecurityId IN --R{security_id}--
+    "
+  ))
+  
+  if(all(!is.na(underlying_security$underlying)) & nrow(underlying_security)>0){
+    underlyings<-query(make_query(
+      security_id=paste0("(",paste0(underlying_security[TRUE,unique(underlying)],collapse=","),")"),
+      query_string = "
+        SELECT 
+          Name,
+          UniqueId,
+          Ticker
+        FROM tSecurity
+        WHERE tSecurity.SecurityId IN --R{security_id}--
+      "
+    ))
+    for(i in names(underlyings))underlyings[[i]]<-latexTranslate(underlyings[[i]])
+  } else {
+    underlyings=data.table(Name="",UniqueId="",Ticker="")
+  }
+  paste0(
+    paste0("\\subsection{",latexTranslate(s),"}\n"),
+    "\\vskip 5mm",
+    #"\\begin{center}\n",
+    ntable(
+      df=underlyings
+    ),
+    #"\\end{center}\n",
+    "\\vskip 5mm",
+    ntable(
+      df=df[TRUE,.(
+        name=name,
+        ticker=ticker,
+        units=units,
+        unit_price=unit_price,
+        unit_accrued_income=unit_accrued_income,
+        maturity=maturity,
+        size=size,
+        strike=strike,
+        contract_type=contract_type
+      )],
+      add_rownames = FALSE,
+      scale="0.5"
+    )
+  )
+},sort(unique(current_bucket_holdings$bucket)))
+
+@
+
+\newpage
+\section{Current IDOF buckets}
+
+\Sexpr{paste0(latex_buckets,collapse="\n")}
+
+\newpage
+\section{Curent IDOF holdings}
+
+\Sexpr{paste0(latex_types,collapse="\n")}
+
+\newpage
+\section{This document }
 
 \vskip 5mm
 
@@ -72,13 +317,14 @@ source("https://raw.githubusercontent.com/satrapade/utility/master/nn_cast.R")
 \begin{tabular}{l l}
 \hline
 timestamp & \Sexpr{latexTranslate(as.character(Sys.timeDate()))} \\
-data and code checksum & \Sexpr{digest(dataset)} \\
+data and code checksum & \Sexpr{digest(holdings)} \\
 git id & \Sexpr{system("git rev-parse HEAD",TRUE)} \\
 user & \Sexpr{latexTranslate(gsub("\\\\","/",system("whoami",TRUE)))} \\
 \hline
 \end{tabular}
 \end{center}
 
+\vskip 5mm
 
 \end{document}
 

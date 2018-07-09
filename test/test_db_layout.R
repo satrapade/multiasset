@@ -91,4 +91,28 @@ instrument_types<-table(holdings$security_type) %>%
 
 current_holdings<-holdings[date==max(date)]
 
+hb<-"
+SELECT 
+  t4Bucket.Name as root,
+  t3Bucket.Name as level_1,
+  t2Bucket.Name as level_2,
+  t1Bucket.Name as level_3,
+  tBucket.Name as level_4
+FROM tBucket
+LEFT JOIN tBucket AS t1Bucket
+ON  t1Bucket.BucketId = tBucket.ParentBucketId 
+LEFT JOIN tBucket AS t2Bucket
+ON  t2Bucket.BucketId = t1Bucket.ParentBucketId 
+LEFT JOIN tBucket AS t3Bucket
+ON  t3Bucket.BucketId = t2Bucket.ParentBucketId 
+LEFT JOIN tBucket AS t4Bucket
+ON  t4Bucket.BucketId = t3Bucket.ParentBucketId 
+WHERE t4Bucket.Name='MagBucket'
+" %>%
+{list(
+  query_string=.
+)} %>%
+{do.call(make_query,.)} %>%
+query
+
 

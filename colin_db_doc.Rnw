@@ -1,0 +1,164 @@
+\documentclass{article}
+
+
+
+\usepackage[portrait, headheight = 0cm, margin=0.25cm, top = 0.25cm, nofoot]{geometry} 
+\usepackage[export]{adjustbox} 
+\usepackage{graphicx}
+\usepackage[dvipsnames,table]{xcolor} % [dvipsnames,table] for setting colors \usepackage{amsmath} \usepackage{xfrac}
+\usepackage{tikz}
+\usetikzlibrary{shapes.geometric}
+\usetikzlibrary{shapes.misc}
+%\usetikzlibrary{external}
+%\tikzexternalize % activate!
+%\usepackage{sparklines}
+\usepackage{xfrac}
+\usepackage[space]{grffile}
+
+\DeclareRobustCommand\Tstrut{\rule{0pt}{2.6ex}}         % = `top' strut
+\DeclareRobustCommand\Bstrut{\rule[-0.9ex]{0pt}{0pt}}   % = `bottom' strut
+\renewcommand{\familydefault}{\sfdefault}
+
+\begin{document}
+<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
+# this chunk is common to all child documents
+require(stringi)
+require(scales)
+require(digest)
+require(clue)
+require(FRAPO)
+require(data.table)
+require(Matrix)
+require(Matrix.utils)
+require(magrittr)
+require(gsubfn)
+require(Hmisc)
+require(ggplot2)
+require(magick)
+require(DBI)
+require(readxl)
+require(Rblpapi)
+require(Rtsne)
+require(knitr)
+
+@
+
+
+\tableofcontents
+
+<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
+
+
+source("https://raw.githubusercontent.com/satrapade/latex_utils/master/latex_helpers_v2.R")
+source("https://raw.githubusercontent.com/satrapade/pairs/master/utility/volatility_trajectory.R")
+source("https://raw.githubusercontent.com/satrapade/utility/master/nn_cast.R")
+source("https://raw.githubusercontent.com/satrapade/utility/master/ticker_class.R")
+source("https://raw.githubusercontent.com/satrapade/pairs/master/utility/query.R")
+source("https://raw.githubusercontent.com/satrapade/pairs/master/sql_tools/make_query.R")
+
+
+rcon<-Rblpapi::blpConnect()
+
+# the multi-asset database
+dbma<-dbConnect(
+odbc::odbc(),
+.connection_string = paste0(
+"driver={SQL Server};",
+"server=SQLS071FP\\MULTIASSET;",
+"database=MultiAsset;",
+"trusted_connection=true"
+))
+
+
+
+dataset<-query("SELECT * FROM SecurityType",db=dbma)
+
+
+
+
+@
+
+\newpage
+\section{SecurityType table}
+
+\begin{center}
+\Sexpr{ntable(
+  df=query("SELECT * FROM SecurityType",db=dbma),
+  add_rownames=FALSE,
+  title="SecurityType",
+  scale="0.75"
+)}
+\end{center}
+
+
+\newpage
+\section{SECURITY\_NAME table}
+
+\begin{center}
+\Sexpr{ntable(
+  df=apply(query("SELECT * FROM SECURITY_NAME",db=dbma),2,latexTranslate),
+  add_rownames=FALSE,
+  title="Securities",
+  scale="0.75"
+)}
+\end{center}
+
+\newpage
+\section{SECURITY\_PRICE table}
+
+\begin{center}
+\Sexpr{ntable(
+  df=apply(query("SELECT TOP 20 * FROM SECURITY_PRICE",db=dbma),2,latexTranslate),
+  add_rownames=FALSE,
+  title="Securities",
+  scale="0.75"
+)}
+\end{center}
+
+\newpage
+\section{OPTION\_PRICE table}
+
+\begin{center}
+\Sexpr{ntable(
+  df=apply(query("SELECT TOP 100 * FROM OPTION_PRICE_2014",db=dbma),2,latexTranslate),
+  add_rownames=FALSE,
+  title="OPTION\\_PRICE\\_ALL",
+  scale="0.33"
+)}
+\end{center}
+
+
+
+\newpage
+\section{STD\_OPTION\_PRICE table}
+
+\begin{center}
+\Sexpr{ntable(
+  df=apply(query("SELECT TOP 75 * FROM STD_OPTION_PRICE_2014",db=dbma),2,latexTranslate),
+  add_rownames=FALSE,
+  title="OPTION\\_PRICE\\_ALL",
+  scale="0.5"
+)}
+\end{center}
+
+
+\newpage
+\section{This document }
+
+\vskip 5mm
+
+\begin{center}
+\begin{tabular}{l l}
+\hline
+timestamp & \Sexpr{latexTranslate(as.character(Sys.timeDate()))} \\
+data and code checksum & \Sexpr{digest(dataset)} \\
+git id & \Sexpr{system("git rev-parse HEAD",TRUE)} \\
+user & \Sexpr{latexTranslate(gsub("\\\\","/",system("whoami",TRUE)))} \\
+\hline
+\end{tabular}
+\end{center}
+
+\vskip 5mm
+
+\end{document}
+

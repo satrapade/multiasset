@@ -93,33 +93,40 @@ leg<-list(
 )
 
 
-
-
-
-
-
-
-
-template_1<-list(
-  opt1=list(
-    size=list(100,"pct"),
-    strike=list(110,"pct"),
-    maturity=list(90,"days"),
-    type=list("EC")
-  ),
-  opt2=list(
-    size=list(100,"pct"),
-    strike=list(140,"pct"),
-    maturity=list(90,"days"),
-    type=list("EC")
-  ),
-  opt3=list(
-    size=list(100,"pct"),
-    strike=list(110,"pct"),
-    maturity=list(90,"days"),
-    type=list("EC")
+tst_vol_surface<-function(strikes=1:10,maturities=c(1,15,50),vol=0.1){
+  m<-matrix(
+    vol,
+    nrow=length(maturities),
+    ncol=length(strikes),
+    dimnames=list(maturities,strikes)
   )
-)
+  data.table(
+    date=
+    strike=strikes,
+    
+    m
+  )
+}
+
+
+
+
+maturities<-c(1,15,50)
+
+i<-findInterval(1:40,maturities)
+
+maturities[i+1]
+
+
+
+1:40 %>% findInterval(.,maturities)
+
+findInterval(1:40,maturities) %>% {cbind(maturities[.],maturities[.+1])}
+
+
+
+
+
 
 
 

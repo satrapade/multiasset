@@ -112,11 +112,12 @@ tst_vol_surface<-function(strikes=1:10,maturities=c(1,15,50),vol=0.1){
 
 
 maturities<-c(1,15,50)
+strikes<-1:10
 
-i<-findInterval(1:40,maturities)
+findInterval(120)
+
 
 maturities[i+1]
-
 
 
 1:40 %>% findInterval(.,maturities)

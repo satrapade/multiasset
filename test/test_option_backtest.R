@@ -98,6 +98,29 @@ ptf$vol <-  ptf$vol_ll*(1-ptf$t_strike)*(1-ptf$t_mat) +
             ptf$vol_hh*(ptf$t_strike)*(ptf$t_mat)
 
 
+ptf$px<-merge(x=ptf,y=hvsurf,by.x=c("date","lo_strike","lo_mat"),by.y=c("date","strike","maturity"))$px
+
+ptf$yfrac<-ptf$days/365
+ptf$nvol<-ptf$vol*sqrt(ptf$yfrac)
+ptf$nmny<-log(ptf$strike/ptf$px)
+ptf$Dplus<-(ptf$nmny+(ptf$nvol)^2/2)/ptf$nvol
+ptf$Dminus<-(ptf$nmny-(ptf$nvol)^2/2)/ptf$nvol
+ptf$premium<-ptf$px*pnorm(ptf$Dplus)-ptf$strike*pnorm(ptf$Dminus)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

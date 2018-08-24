@@ -4,12 +4,33 @@ require(magrittr)
 require(fasttime)
 require(lubridate)
 require(scales)
+require(fields)
+
 
 # option backtest
 
 source("https://raw.githubusercontent.com/satrapade/utility/master/nn_cast.R")
 source("https://raw.githubusercontent.com/satrapade/pairs/master/utility/make_date_range.R")
 
+# option models
+
+EC <- function(S,X,t,r,v)
+{
+  d1 <- (log(S/X)+(r+0.5*v^2)*t)/(v*sqrt(t))
+  d2 <- d1-v*sqrt(t)
+  S*pnorm(d1)-X*exp(-r*t)*pnorm(d2)
+}
+
+# option models
+EP  <- function(S,X,t,r,v)
+{
+  d1 <- (log(S/X)+(r+0.5*v^2)*t)/(v*sqrt(t))
+  d2 <- d1-v*sqrt(t)
+  X*exp(-r*t)*pnorm(-d2)-S*pnorm(-d1)
+}
+
+
+# strikes
 strikes<-seq(from=100,to=500,length.out=100)
 maturities<-c(1,7,15,30,45,60,90,120,180)
 
@@ -39,7 +60,7 @@ market_df<- make_date_df("2015-01-01","2018-09-01") %>%
   .
 }
 
-
+# a vol surface
 make_volsurface<-function(i,market_df){
   date<-market_df$date_string[i]
   vol=runif(1)*0.1+0.1
@@ -53,14 +74,20 @@ make_volsurface<-function(i,market_df){
   )
 }
 
-hvsurf<-do.call(rbind,mapply(make_volsurface,i=market_df$pday,MoreArgs=list(market_df=market_df),SIMPLIFY=FALSE))
+# timeseries of vol surfaces
+hvsurf<-do.call(
+  rbind,
+  mapply(make_volsurface,i=market_df$pday,MoreArgs=list(market_df=market_df),SIMPLIFY=FALSE)
+)
 
+# criteria for roll dates
 expiries<-list(
   quote(month %in% c("March","June","September","December")),
   quote(wday=="Friday"),
   quote(wday_count==3)
 )
 
+# apply a set of filters to all dates 
 make_dates<-function(filter_list,market_df){
   res<-Reduce(function(a,b)eval(bquote(.(a)[.(b)])),filter_list,init=market_df)
   res$start<-res$pday
@@ -71,6 +98,7 @@ make_dates<-function(filter_list,market_df){
 roll_dates<-make_dates(expiries,market_df)
 roll_dates$strike<-roll_dates$px*1.1
 
+# create portfolio 
 ptf<-data.table(
   day=market_df$pday,
   date=market_df$date,
@@ -85,6 +113,8 @@ ptf<-data.table(
   hi_mat=maturities[findInterval(days,maturities)+1]
 ))]
 
+
+# fetch volatilities required for bilinear interpolation
 ptf$vol_ll<-merge(x=ptf,y=hvsurf,by.x=c("date","lo_strike","lo_mat"),by.y=c("date","strike","maturity"))$vol
 ptf$vol_lh<-merge(x=ptf,y=hvsurf,by.x=c("date","lo_strike","hi_mat"),by.y=c("date","strike","maturity"))$vol
 ptf$vol_hl<-merge(x=ptf,y=hvsurf,by.x=c("date","hi_strike","lo_mat"),by.y=c("date","strike","maturity"))$vol
@@ -99,13 +129,45 @@ ptf$vol <-  ptf$vol_ll*(1-ptf$t_strike)*(1-ptf$t_mat) +
 
 
 ptf$px<-merge(x=ptf,y=hvsurf,by.x=c("date","lo_strike","lo_mat"),by.y=c("date","strike","maturity"))$px
-
 ptf$yfrac<-ptf$days/365
-ptf$nvol<-ptf$vol*sqrt(ptf$yfrac)
-ptf$nmny<-log(ptf$strike/ptf$px)
-ptf$Dplus<-(ptf$nmny+(ptf$nvol)^2/2)/ptf$nvol
-ptf$Dminus<-(ptf$nmny-(ptf$nvol)^2/2)/ptf$nvol
-ptf$premium<-ptf$px*pnorm(ptf$Dplus)-ptf$strike*pnorm(ptf$Dminus)
+
+
+
+ptf$call<-call.value(ptf$px,ptf$strike,ptf$yfrac,0,ptf$vol)
+ptf$put<-put.value(ptf$px,ptf$strike,ptf$yfrac,0,ptf$vol)
+
+
+
+# fast resampling
+
+
+
+resample_vol_grid<-function (vol_df,strikes,maturities) 
+{
+  strikes_in<-sort(unique(vol_df$strike))
+  maturities_in<-sort(unique(vol_df$maturity))
+  j<-data.table::frank(vol_df$strike,ties.method = "dense")
+  i<-data.table::frank(vol_df$maturity,ties.method = "dense")
+  vol_grid<-sparseMatrix(j=j,i=i,x=vol_df$vol)
+  res<-bilinear(
+    y=strikes_in,
+    x=maturities_in,
+    z=vol_grid,
+    y0=rep(strikes,times=length(maturities)),
+    x0=rep(maturities,each=length(strikes))
+  )
+  data.table(strike=res$y,maturity=res$x,vol=res$z)
+}
+
+vol_df<-hvsurf[date==fastPOSIXct("2015-01-01")]
+
+system.time(for(i in 1:1000){x<-resample_vol_grid(vol_df,strikes,maturities)})
+
+
+
+
+
+
 
 
 

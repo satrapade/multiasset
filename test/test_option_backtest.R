@@ -13,6 +13,8 @@ require(scales)
 require(fields)
 require(gsubfn)
 require(stringi)
+require(Matrix)
+require(akima)
 
 source("https://raw.githubusercontent.com/satrapade/pairs/master/utility/query.R")
 source("https://raw.githubusercontent.com/satrapade/pairs/master/sql_tools/make_query.R")
@@ -29,31 +31,34 @@ odbc::odbc(),
 "trusted_connection=true"
 ))
 
-on_site<-FALSE
 
-if(on_site){
-  spx_vol <- query(make_query(
-  security_id="108105",
-  query_string = "
-    SELECT 
-      *
-    FROM VOLATILITY_SURFACE_2014
-    WHERE VOLATILITY_SURFACE_2014.SecurityID = --R{security_id}--
-  "),
-  db=dbma) %>% {
-    x<- .[Delta==80]
-    x$Strike<-9999
-    y<- .[Delta==(-80)]
-    y$Strike<-0
-    z<- .[Days==30]
-    z$Days<-0
-    rbind(.,x,y,z)
-  }
-  fwrite(spx_vol,"spx_vol.csv")
-} else {
-  spx_vol<-fread("spx_vol.csv")
+
+# dates
+make_date_df<-function(start,end){
+  make_date_range(start,end) %>% 
+  {data.table(
+  date_string=.,
+  date=fastPOSIXct(.))[,
+    c(.SD,list(
+      day=day(date),
+      mday=mday(date),
+      qday=qday(date),
+      yday=yday(date),
+      pday=seq_along(date),
+      wday=weekdays(date),
+      month=months(date),
+      wday_count=ceiling(mday(date)/7)
+    ))
+  ]}
 }
 
+# apply a set of filters to all dates 
+make_dates<-function(filter_list,market_df){
+  res<-Reduce(function(a,b)eval(bquote(.(a)[.(b)])),filter_list,init=market_df)
+  res$start<-res$pday
+  res$end<-c(res$pday[-1],nrow(market_df))
+  res
+}
 
 # option models
 
@@ -91,30 +96,47 @@ resample_vol_grid<-function (vol_df,strikes,maturities)
 }
 
 
-# strikes
-strikes<-seq(from=min(spx_vol$Strike),to=max(spx_vol$Strike),length.out=20)
-maturities<-sort(unique(spx_vol$Days))
+on_site<-TRUE
 
-# dates
-make_date_df<-function(start,end){
-  make_date_range(start,end) %>% 
-  {data.table(
-  date_string=.,
-  date=fastPOSIXct(.))[,
-    c(.SD,list(
-      day=day(date),
-      mday=mday(date),
-      qday=qday(date),
-      yday=yday(date),
-      pday=seq_along(date),
-      wday=weekdays(date),
-      month=months(date),
-      wday_count=ceiling(mday(date)/7)
-    ))
-  ]}
+if(on_site){
+  spx_vol <- query(make_query(
+  security_id="108105",
+  query_string = "
+    SELECT 
+      VOLATILITY_SURFACE_2014.Date AS Date,
+      VOLATILITY_SURFACE_2014.Days AS Days,
+      VOLATILITY_SURFACE_2014.Strike AS Strike,
+      VOLATILITY_SURFACE_2014.Delta AS Delta,
+      VOLATILITY_SURFACE_2014.ImpliedVol AS ImpliedVol,
+      SECURITY_PRICE.ClosePrice AS ClosePrice
+    FROM VOLATILITY_SURFACE_2014
+    LEFT JOIN SECURITY_PRICE 
+    ON SECURITY_PRICE.SecurityID = VOLATILITY_SURFACE_2014.SecurityID
+    AND SECURITY_PRICE.Date = VOLATILITY_SURFACE_2014.Date
+    WHERE VOLATILITY_SURFACE_2014.SecurityID = --R{security_id}--
+  "),
+  db=dbma) %>% {
+    x<- .[Delta==80]
+    x$Strike<-9999
+    y<- .[Delta==(-80)]
+    y$Strike<-0
+    z<- .[Days==30]
+    z$Days<-0
+    res<-rbind(.,x,y,z)
+    res$Date<-fastPOSIXct(res$Date)
+    res
+  }
+  fwrite(spx_vol,"spx_vol.csv")
+} else {
+  spx_vol<-fread("spx_vol.csv")
+  spx_vol$Date<-fastPOSIXct(spx_vol$Date)
 }
 
-market_df<- make_date_df("2015-01-01","2018-09-01") 
+maturities<-sort(unique(spx_vol$Days))
+new_strikes<-seq(from=1000,to=3000,length.out=50)
+resampled_spx_vol<-spx_vol[,resample_vol_grid(.SD,new_strikes,maturities),keyby=Date]
+
+market_df<- make_date_df(as.character(min(spx_vol$Date)),as.character(max(spx_vol$Date))) 
 
 
 # criteria for roll dates
@@ -124,16 +146,14 @@ expiries<-list(
   quote(wday_count==3)
 )
 
-# apply a set of filters to all dates 
-make_dates<-function(filter_list,market_df){
-  res<-Reduce(function(a,b)eval(bquote(.(a)[.(b)])),filter_list,init=market_df)
-  res$start<-res$pday
-  res$end<-c(res$pday[-1],nrow(market_df))
-  res
-}
 
 roll_dates<-make_dates(expiries,market_df)
-roll_dates$strike<-2100*1.1
+roll_dates$strike<-merge(
+  x=roll_dates,
+  y=spx_vol[,.(close=ClosePrice[1]),keyby=Date],
+  by.x=c("date"),
+  by.y=c("Date")
+)$close*1.1
 
   
 # create portfolio 
@@ -145,18 +165,18 @@ ptf<-data.table(
   strike=roll_dates$strike[roll],
   days=roll_dates$end[roll]-market_df$pday[day]
 ))][,c(.SD,list(
-  lo_strike=strikes[findInterval(strike,strikes)],
-  hi_strike=strikes[findInterval(strike,strikes)+1],
+  lo_strike=new_strikes[findInterval(strike,new_strikes)],
+  hi_strike=new_strikes[findInterval(strike,new_strikes)+1],
   lo_mat=maturities[findInterval(days,maturities)],
   hi_mat=maturities[findInterval(days,maturities)+1]
 ))]
 
 
-# fetch volatilities required for bilinear interpolation
-ptf$vol_ll<-merge(x=ptf,y=hvsurf,by.x=c("date","lo_strike","lo_mat"),by.y=c("date","strike","maturity"))$vol
-ptf$vol_lh<-merge(x=ptf,y=hvsurf,by.x=c("date","lo_strike","hi_mat"),by.y=c("date","strike","maturity"))$vol
-ptf$vol_hl<-merge(x=ptf,y=hvsurf,by.x=c("date","hi_strike","lo_mat"),by.y=c("date","strike","maturity"))$vol
-ptf$vol_hh<-merge(x=ptf,y=hvsurf,by.x=c("date","hi_strike","hi_mat"),by.y=c("date","strike","maturity"))$vol
+
+ptf$vol_ll<-merge(x=ptf,y=resampled_spx_vol,by.x=c("date","lo_strike","lo_mat"),by.y=c("Date","Strike","Days"))$ImpliedVol
+ptf$vol_lh<-merge(x=ptf,y=resampled_spx_vol,by.x=c("date","lo_strike","hi_mat"),by.y=c("Date","Strike","Days"))$ImpliedVol
+ptf$vol_hl<-merge(x=ptf,y=resampled_spx_vol,by.x=c("date","hi_strike","lo_mat"),by.y=c("Date","Strike","Days"))$ImpliedVol
+ptf$vol_hh<-merge(x=ptf,y=resampled_spx_vol,by.x=c("date","hi_strike","hi_mat"),by.y=c("Date","Strike","Days"))$ImpliedVol
 ptf$t_strike<-(ptf$strike-ptf$lo_strike)/(ptf$hi_strike-ptf$lo_strike)
 ptf$t_mat<-(ptf$days-ptf$lo_mat)/(ptf$hi_mat-ptf$lo_mat)
 
@@ -179,8 +199,7 @@ ptf$EP<-EP(ptf$px,ptf$strike,ptf$yfrac,0,ptf$vol)
 
 
 
-new_strikes<-seq(from=1000,to=3000,length.out=50)
-resampled_spx_vol<-spx_vol[,resample_vol_grid(.SD,new_strikes,maturities),keyby=Date]
+
 
 resampled_spx_vol[Date==fastPOSIXct("2014-01-02")]
 spx_vol[Date==fastPOSIXct("2014-01-02")]

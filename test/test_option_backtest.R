@@ -136,7 +136,7 @@ resample_vol_grid<-function (vol_df,strikes,maturities)
 # fetch vol surface
 #
 
-on_site<-FALSE
+on_site<-TRUE
 
 if(on_site){
   spx_vol <- make_market(id="108105",vol_table="VOLATILITY_SURFACE_2014")
@@ -189,11 +189,6 @@ ptf<-data.table(
   start=roll_dates$start[roll],
   end=roll_dates$end[roll],
   days=roll_dates$end[roll]-day
-))][,c(.SD,list(
-  lo_strike=strikes[findInterval(strike,strikes)],
-  hi_strike=strikes[findInterval(strike,strikes)+1],
-  lo_mat=maturities[findInterval(days,maturities)],
-  hi_mat=maturities[findInterval(days,maturities)+1]
 ))]
 
 
@@ -212,15 +207,16 @@ interpolate_vol<-function(ptf,vsurf)
   vol_lh<-merge(x=option_dets,y=vsurf,by.x=c("date","lo_strike","hi_mat"),by.y=c("Date","Strike","Days"))$ImpliedVol
   vol_hl<-merge(x=option_dets,y=vsurf,by.x=c("date","hi_strike","lo_mat"),by.y=c("Date","Strike","Days"))$ImpliedVol
   vol_hh<-merge(x=option_dets,y=vsurf,by.x=c("date","hi_strike","hi_mat"),by.y=c("Date","Strike","Days"))$ImpliedVol
-  t_strike<-(ptf$strike-ptf$lo_strike)/(ptf$hi_strike-ptf$lo_strike)
-  t_mat<-(ptf$days-ptf$lo_mat)/(ptf$hi_mat-ptf$lo_mat)
+  t_strike<-(ptf$strike-option_dets$lo_strike)/(option_dets$hi_strike-option_dets$lo_strike)
+  t_mat<-(ptf$days-option_dets$lo_mat)/(option_dets$hi_mat-option_dets$lo_mat)
   rowSums(cbind(
-    ptf$vol_ll*(1-ptf$t_strike)*(1-ptf$t_mat),
-    ptf$vol_hl*(ptf$t_strike)*(1-ptf$t_mat),
-    ptf$vol_lh*(1-ptf$t_strike)*(ptf$t_mat),
-    ptf$vol_hh*(ptf$t_strike)*(ptf$t_mat)
+    vol_ll*(1-t_strike)*(1-t_mat),
+    vol_hl*(t_strike)*(1-t_mat),
+    vol_lh*(t_strike)*(t_mat),
+    vol_hh*(t_strike)*(t_mat)
   ))
 }
+
 
 
 
@@ -228,7 +224,7 @@ ptf$vol <-  interpolate_vol(ptf,resampled_spx_vol)
 
 ptf$yfrac<-ptf$days/365
 
-ptf$close<-merge(x=ptf,y=resampled_spx_vol,by.x=c("date","hi_strike","hi_mat"),by.y=c("Date","Strike","Days"))$ClosePrice
+ptf$close<-resampled_spx_vol[Date %in% ptf$date,ClosePrice[1],keyby=Date][[2]]
 
 
 ptf$EC<-EC(ptf$close,ptf$strike,ptf$yfrac,0,ptf$vol)

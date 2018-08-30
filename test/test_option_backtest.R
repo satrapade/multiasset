@@ -15,7 +15,9 @@ require(gsubfn)
 require(stringi)
 require(Matrix)
 require(akima)
+require(ggplot2)
 
+source("https://raw.githubusercontent.com/satrapade/utility/master/utility_functions.R")
 source("https://raw.githubusercontent.com/satrapade/pairs/master/utility/query.R")
 source("https://raw.githubusercontent.com/satrapade/pairs/master/sql_tools/make_query.R")
 source("https://raw.githubusercontent.com/satrapade/utility/master/nn_cast.R")
@@ -90,7 +92,7 @@ make_strategy_roll_dates<-function(filter_list,strategy_df){
 }
 
 
-# dates
+# date and 
 make_strategy_df<-function(
   volsurf,
   filter_list=expiries<-list(
@@ -137,8 +139,14 @@ make_strategy_df<-function(
 
 
 # resamples volgrid to specified strikes, maturities on a single date
-resample_vol_grid<-function (vol_df,strikes,maturities) 
+resample_vol_grid<-function (vol_df,strikes,maturities,verbose=FALSE) 
 {
+  if(verbose){
+    the_date<-as.character(vol_df$Date[1],format="%Y-%m-%d")
+    cat(the_date,"\n")
+  }
+  vol_df<-vol_df[ImpliedVol>0]
+  if(nrow(vol_df)<1)return(NULL)
   strikes_in<-sort(unique(vol_df$Strike))
   maturities_in<-sort(unique(vol_df$Days))
   j<-data.table::frank(vol_df$Strike,ties.method = "dense")
@@ -176,8 +184,8 @@ interpolate_vol<-function(date,strike,days,vsurf)
   vol_lh<-merge(x=option_dets,y=vsurf,by.x=c("date","lo_strike","hi_mat"),by.y=c("Date","Strike","Days"))$ImpliedVol
   vol_hl<-merge(x=option_dets,y=vsurf,by.x=c("date","hi_strike","lo_mat"),by.y=c("Date","Strike","Days"))$ImpliedVol
   vol_hh<-merge(x=option_dets,y=vsurf,by.x=c("date","hi_strike","hi_mat"),by.y=c("Date","Strike","Days"))$ImpliedVol
-  t_strike<-(ptf$strike-option_dets$lo_strike)/(option_dets$hi_strike-option_dets$lo_strike)
-  t_mat<-(ptf$days-option_dets$lo_mat)/(option_dets$hi_mat-option_dets$lo_mat)
+  t_strike<-(strike-option_dets$lo_strike)/(option_dets$hi_strike-option_dets$lo_strike)
+  t_mat<-(days-option_dets$lo_mat)/(option_dets$hi_mat-option_dets$lo_mat)
   rowSums(cbind(
     vol_ll*(1-t_strike)*(1-t_mat),
     vol_hl*(t_strike)*(1-t_mat),
@@ -193,6 +201,7 @@ interpolate_vol<-function(date,strike,days,vsurf)
 make_option_pnl<-function(
   model=EP,
   strike=0.9,
+  dir=1,
   strategy,
   vsurf
 )
@@ -207,10 +216,11 @@ make_option_pnl<-function(
     yfrac=strategy$yfrac,
     vol=vols,
     close=strategy$close,
-    reval=ifelse(strategy$pday==strategy$end-1,0,reval), 
-    cash_start=cash_start,
-    cash_end=cash_end,
-    cash=cumsum(cash_start+cash_end)
+    reval=round(dir*ifelse(strategy$pday==strategy$end-1,0,reval),digits=3),
+    cash_start=round(dir*cash_start,digits=3),
+    cash_end=round(dir*cash_end,digits=3),
+    cash=round(dir*cumsum(cash_start+cash_end),digits=3),
+    pnl=round(dir*(ifelse(strategy$pday==strategy$end-1,0,reval)+cumsum(cash_start+cash_end)),digits=3)
   )
 }
 
@@ -218,13 +228,16 @@ make_option_pnl<-function(
 ################################################################################
 
 #
-# fetch vol surface
+# 1. fetch vol surface
+# 2. resample vol surface
+# 3. create strategy blotter
+# 4. compute option values
 #
 
 on_site<-TRUE
 
 if(on_site){
-  spx_vol <- make_market(id="108105",vol_table="VOLATILITY_SURFACE_2014")
+  spx_vol <- make_market(id="108105",vol_table="VOLATILITY_SURFACE_ALL")
   fwrite(spx_vol,"spx_vol.csv")
 } else {
   spx_vol<-fread("spx_vol.csv")
@@ -236,8 +249,8 @@ if(on_site){
 #
 
 maturities<-sort(unique(spx_vol$Days))
-strikes<-seq(from=1000,to=3000,length.out=50)
-resampled_spx_vol<-spx_vol[,resample_vol_grid(.SD,strikes,maturities),keyby=Date]
+strikes<-round(seq(from=250,to=3000,length.out=50),digits=0)
+resampled_spx_vol<-spx_vol[,resample_vol_grid(data.table(Date=Date,.SD),strikes,maturities,TRUE),keyby=Date]
 
 
 #
@@ -252,17 +265,26 @@ strategy_df<- make_strategy_df(
   )
 )
 
+fwrite(strategy_df,"strategy_df.csv")
+fwrite(resampled_spx_vol,"resampled_spx_vol.csv")
+write(compress(fread("resampled_spx_vol.csv")),"compressed_resampled_spx_vol.txt")
+
+strategy_df<-fread("strategy_df.csv")
+resampled_spx_vol<- "compressed_resampled_spx_vol.txt" %>% scan(character()) %>% decompress
+
 #
-# compute strike pnls
-#
+# compute option pnls
 
-strategy_pnl<-data.table(
-  EP90=make_option_pnl(model=EP,strike=0.9,strategy_df,resampled_spx_vol),
-  EP80=make_option_pnl(model=EP,strike=0.8,strategy_df,resampled_spx_vol)
-)
+system.time(strategy_pnl<-data.table(
+  date=fastPOSIXct(strategy_df$date),
+  pnl=rowSums(cbind(
+    make_option_pnl(model=EP,strike=0.95,dir=-1,strategy=strategy_df,vsurf=resampled_spx_vol)$pnl,
+    make_option_pnl(model=EP,strike=0.85,dir=+1,strategy=strategy_df,vsurf=resampled_spx_vol)$pnl
+  ))
+))
 
-
-
-
-
+strategy_pnl %>%
+  ggplot() +
+  geom_line(aes(x=date,y=pnl))
+  
 

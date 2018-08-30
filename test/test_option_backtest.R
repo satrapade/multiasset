@@ -181,7 +181,7 @@ interpolate_vol<-function(date,strike,days,vsurf)
   rowSums(cbind(
     vol_ll*(1-t_strike)*(1-t_mat),
     vol_hl*(t_strike)*(1-t_mat),
-    vol_lh*(t_strike)*(t_mat),
+    vol_lh*(1-t_strike)*(t_mat),
     vol_hh*(t_strike)*(t_mat)
   ))
 }

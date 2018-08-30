@@ -203,6 +203,10 @@ make_option_pnl<-function(
   cash_start<-ifelse(strategy$pday==strategy$start,-reval,0)
   cash_end<-ifelse(strategy$pday==strategy$end-1,reval,0)
   data.table(
+    strike=strikes,
+    yfrac=strategy$yfrac,
+    vol=vols,
+    close=strategy$close,
     reval=ifelse(strategy$pday==strategy$end-1,0,reval), 
     cash_start=cash_start,
     cash_end=cash_end,
@@ -252,9 +256,9 @@ strategy_df<- make_strategy_df(
 # compute strike pnls
 #
 
-strategy_pnl<-cbind(
-  EP90=make_option_pnl(EP,0.9,strategy_df,resampled_spx_vol)[,-(reval+cash)],
-  EP80=make_option_pnl(EP,0.8,strategy_df,resampled_spx_vol)[,+(reval+cash)]
+strategy_pnl<-data.table(
+  EP90=make_option_pnl(model=EP,strike=0.9,strategy_df,resampled_spx_vol),
+  EP80=make_option_pnl(model=EP,strike=0.8,strategy_df,resampled_spx_vol)
 )
 
 

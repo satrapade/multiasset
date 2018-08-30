@@ -240,8 +240,11 @@ system.time(strategy_pnl<-data.table(
   ))
 ))
 
-strategy_pnl %>%
-  ggplot() +
-  geom_line(aes(x=date,y=pnl))
+g1<-strategy_pnl %>% ggplot() + geom_line(aes(x=date,y=pnl))
   
+plot(g1)
+
+
+
+
 

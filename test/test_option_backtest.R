@@ -1,7 +1,7 @@
 #
 # option backtest
 #
-#
+# volatility_surface -
 #
 
 require(data.table)
@@ -62,37 +62,6 @@ make_market<-function(id="108105",vol_table="VOLATILITY_SURFACE_2014")
   res
 }
 
-
-
-
-
-# dates
-make_date_df<-function(start,end){
-  make_date_range(start,end) %>% 
-  {data.table(
-  date_string=.,
-  date=fastPOSIXct(.))[,
-    c(.SD,list(
-      day=day(date),
-      mday=mday(date),
-      qday=qday(date),
-      yday=yday(date),
-      pday=seq_along(date),
-      wday=weekdays(date),
-      month=months(date),
-      wday_count=ceiling(mday(date)/7)
-    ))
-  ]}
-}
-
-# apply a set of filters to all dates 
-make_dates<-function(filter_list,market_df){
-  res<-Reduce(function(a,b)eval(bquote(.(a)[.(b)])),filter_list,init=market_df)
-  res$start<-res$pday
-  res$end<-c(res$pday[-1],max(market_df$pday))
-  res
-}
-
 # option models
 
 EC <- function(S,X,t,r,v)
@@ -109,6 +78,63 @@ EP  <- function(S,X,t,r,v)
   d2 <- d1-v*sqrt(t)
   X*exp(-r*t)*pnorm(-d2)-S*pnorm(-d1)
 }
+
+
+
+# apply a set of filters to all dates 
+make_strategy_roll_dates<-function(filter_list,strategy_df){
+  res<-Reduce(function(a,b)eval(bquote(.(a)[.(b)])),filter_list,init=strategy_df)
+  res$start<-res$pday
+  res$end<-c(res$pday[-1],max(strategy_df$pday))
+  res
+}
+
+
+# dates
+make_strategy_df<-function(
+  volsurf,
+  filter_list=expiries<-list(
+    quote(month %in% c("March","June","September","December")),
+    quote(wday=="Friday"),
+    quote(wday_count==3)
+  )
+)
+{
+  strategy_df <- volsurf[,.(
+    date=Date[1],
+    date_string=as.character(Date[1],format="%Y-%m-%d"),
+    close=ClosePrice[1]
+  ),keyby=Date][,.(
+    date=date,
+    date_string=date_string,
+    close=close
+  )]
+  strategy_df$day <- day(strategy_df$date)
+  strategy_df$mday <- mday(strategy_df$date)
+  strategy_df$qday <- qday(strategy_df$date)
+  strategy_df$yday <- yday(strategy_df$date)
+  strategy_df$pday <- seq_along(strategy_df$date)
+  strategy_df$wday <- weekdays(strategy_df$date)
+  strategy_df$month <- months(strategy_df$date)
+  strategy_df$wday_count <- ceiling(mday(strategy_df$date)/7)
+  setkey(strategy_df,date_string)
+  roll_dates<-make_strategy_roll_dates(filter_list,strategy_df)
+  strategy_df$roll<-findInterval(
+    strategy_df$pday,
+    roll_dates$pday,
+    rightmost.closed = FALSE,
+    all.inside = FALSE
+  )
+  strategy_df<-strategy_df[roll>0 & roll<nrow(roll_dates)]
+  strategy_df$roll_close<-roll_dates$close[strategy_df$roll]
+  strategy_df$start<-roll_dates$start[strategy_df$roll]
+  strategy_df$end<-roll_dates$end[strategy_df$roll]
+  strategy_df$days<-roll_dates$end[strategy_df$roll]-strategy_df$pday
+  strategy_df$yfrac<-strategy_df$days/365
+  strategy_df
+}
+
+
 
 # resamples volgrid to specified strikes, maturities on a single date
 resample_vol_grid<-function (vol_df,strikes,maturities) 
@@ -131,77 +157,20 @@ resample_vol_grid<-function (vol_df,strikes,maturities)
   data.table(Strike=res$y,Days=res$x,ImpliedVol=res$z,ClosePrice=vol_df$ClosePrice[1])
 }
 
-
 #
-# fetch vol surface
+# interpolate vols
+# on resampled vol surface
 #
-
-on_site<-TRUE
-
-if(on_site){
-  spx_vol <- make_market(id="108105",vol_table="VOLATILITY_SURFACE_2014")
-  fwrite(spx_vol,"spx_vol.csv")
-} else {
-  spx_vol<-fread("spx_vol.csv")
-  spx_vol$Date<-fastPOSIXct(spx_vol$Date)
-}
-
-maturities<-sort(unique(spx_vol$Days))
-strikes<-seq(from=1000,to=3000,length.out=50)
-resampled_spx_vol<-spx_vol[,resample_vol_grid(.SD,strikes,maturities),keyby=Date]
-
-
-
-
-market_df<- make_date_df(
-  start=as.character(min(spx_vol$Date)),
-  end=as.character(max(spx_vol$Date))
-)[date %in% spx_vol$Date]
-
-
-# criteria for roll dates
-expiries<-list(
-  quote(month %in% c("March","June","September","December")),
-  quote(wday=="Friday"),
-  quote(wday_count==3)
-)
-
-roll_dates<-make_dates(expiries,market_df)
-
-roll_dates$strike<-merge(
-  x=roll_dates,
-  y=spx_vol[,.(close=ClosePrice[1]),keyby=Date],
-  by.x=c("date"),
-  by.y=c("Date")
-)$close*0.95
-
-
-
-
-  
-# create portfolio 
-ptf<-data.table(
-  day=market_df$pday,
-  date=market_df$date,
-  roll=findInterval(market_df$pday,roll_dates$pday,rightmost.closed = FALSE,all.inside = FALSE)
-)[roll>0 & roll<nrow(roll_dates)][,c(.SD,list(
-  strike=roll_dates$strike[roll],
-  start=roll_dates$start[roll],
-  end=roll_dates$end[roll],
-  days=roll_dates$end[roll]-day
-))]
-
-
-interpolate_vol<-function(ptf,vsurf)
+interpolate_vol<-function(date,strike,days,vsurf)
 {
   strikes<-sort(unique(vsurf$Strike))
   maturities<-sort(unique(vsurf$Days))
   option_dets<-data.table(
-    date=ptf$date,
-    lo_strike=strikes[findInterval(ptf$strike,strikes)],
-    hi_strike=strikes[findInterval(ptf$strike,strikes)+1],
-    lo_mat=maturities[findInterval(ptf$days,maturities)],
-    hi_mat=maturities[findInterval(ptf$days,maturities)+1]
+    date=date,
+    lo_strike=strikes[findInterval(strike,strikes)],
+    hi_strike=strikes[findInterval(strike,strikes)+1],
+    lo_mat=maturities[findInterval(days,maturities)],
+    hi_mat=maturities[findInterval(days,maturities)+1]
   )
   vol_ll<-merge(x=option_dets,y=vsurf,by.x=c("date","lo_strike","lo_mat"),by.y=c("Date","Strike","Days"))$ImpliedVol
   vol_lh<-merge(x=option_dets,y=vsurf,by.x=c("date","lo_strike","hi_mat"),by.y=c("Date","Strike","Days"))$ImpliedVol
@@ -217,21 +186,76 @@ interpolate_vol<-function(ptf,vsurf)
   ))
 }
 
+#
+#
+#
+
+make_option_pnl<-function(
+  model=EP,
+  strike=0.9,
+  strategy,
+  vsurf
+)
+{
+  strikes<-strategy$roll_close*strike
+  vols<-interpolate_vol(date=strategy$date,strike=strikes,days=strategy_df$days,vsurf=vsurf)
+  reval<-model(strategy$close, strikes, strategy$yfrac, 0,vols)
+  cash_start<-ifelse(strategy$pday==strategy$start,-reval,0)
+  cash_end<-ifelse(strategy$pday==strategy$end-1,reval,0)
+  data.table(
+    reval=ifelse(strategy$pday==strategy$end-1,0,reval), 
+    cash_start=cash_start,
+    cash_end=cash_end,
+    cash=cumsum(cash_start+cash_end)
+  )
+}
 
 
+################################################################################
 
-ptf$vol <-  interpolate_vol(ptf,resampled_spx_vol)
+#
+# fetch vol surface
+#
 
-ptf$yfrac<-ptf$days/365
+on_site<-TRUE
 
-ptf$close<-resampled_spx_vol[Date %in% ptf$date,ClosePrice[1],keyby=Date][[2]]
+if(on_site){
+  spx_vol <- make_market(id="108105",vol_table="VOLATILITY_SURFACE_2014")
+  fwrite(spx_vol,"spx_vol.csv")
+} else {
+  spx_vol<-fread("spx_vol.csv")
+  spx_vol$Date<-fastPOSIXct(spx_vol$Date)
+}
+
+#
+# resample vol surface to common set of strikes
+#
+
+maturities<-sort(unique(spx_vol$Days))
+strikes<-seq(from=1000,to=3000,length.out=50)
+resampled_spx_vol<-spx_vol[,resample_vol_grid(.SD,strikes,maturities),keyby=Date]
 
 
-ptf$EC<-EC(ptf$close,ptf$strike,ptf$yfrac,0,ptf$vol)
-ptf$EP<-EP(ptf$close,ptf$strike,ptf$yfrac,0,ptf$vol)
+#
+# make strategy data frame
+#
+strategy_df<- make_strategy_df(
+  volsurf=resampled_spx_vol,
+  filter_list=list(
+    quote(month %in% c("March","June","September","December")),
+    quote(wday=="Friday"),
+    quote(wday_count==3)
+  )
+)
 
+#
+# compute strike pnls
+#
 
-
+strategy_pnl<-cbind(
+  EP90=make_option_pnl(EP,0.9,strategy_df,resampled_spx_vol)[,-(reval+cash)],
+  EP80=make_option_pnl(EP,0.8,strategy_df,resampled_spx_vol)[,+(reval+cash)]
+)
 
 
 

@@ -248,7 +248,7 @@ g1<-strategy_pnl %>% ggplot() + geom_line(aes(x=date,y=pnl)) +
   
 plot(g1)
 
-g2<-strategy_pnl %>% ggplot() + geom_histogram(aes(c(0,diff(pnl)))) 
+g2<-strategy_pnl %>% ggplot() + geom_histogram(aes(c(0,diff(pnl))),bins=100) 
 
 plot(g2)
 

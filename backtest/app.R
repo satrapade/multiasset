@@ -264,14 +264,30 @@ option_payoffs<-list(
 )
 
 payoffs<-rbind(
-  data.table(name="None",model=function(...)0,strike_count=0,payoff=function(spot,strikes)return(0)),
-  data.table(name="Call",model=EC,strike_count=1,payoff=function(spot,strikes)return(0)),
-  data.table(name="Put",model=EP,strike_count=1,payoff=function(spot,strikes)return(0)),
-  data.table(name="CallSpread",model=ECS,strike_count=2,payoff=function(spot,strikes)return(0)),
-  data.table(name="PutSpread",model=EPS,strike_count=2,payoff=function(spot,strikes)return(0)),
-  data.table(name="Strangle",model=ESTRAG,strike_count=2,payoff=function(spot,strikes)return(0)),
-  data.table(name="Straddle",model=ESTRAD,strike_count=1,payoff=function(spot,strikes)return(0)),
-  data.table(name="Butterfly",model=ESTRAD,strike_count=3,payoff=function(spot,strikes)return(0))
+  data.table(
+    name="None",model=function(...)0,strike_count=0,size=numeric(0),payoff=function(spot,strikes)return(0)
+  ),
+  data.table(
+    name="Call",model=EC,strike_count=1,size=c(1),payoff=function(spot,strikes)return(0)
+  ),
+  data.table(
+    name="Put",model=EP,strike_count=1,size=c(1),payoff=function(spot,strikes)return(0)
+  ),
+  data.table(
+    name="CallSpread",model=ECS,strike_count=2,size=c(1,-1),payoff=function(spot,strikes)return(0)
+  ),
+  data.table(
+    name="PutSpread",model=EPS,strike_count=2,size=c(-1,1),payoff=function(spot,strikes)return(0)
+  ),
+  data.table(
+    name="Strangle",model=ESTRAG,strike_count=2,size=c(1,1),payoff=function(spot,strikes)return(0)
+  ),
+  data.table(
+    name="Straddle",model=ESTRAD,strike_count=1,size=c(1),payoff=function(spot,strikes)return(0)
+  ),
+  data.table(
+    name="Butterfly",model=ESTRAD,strike_count=3,size=c(1,-2,1),payoff=function(spot,strikes)return(0)
+  )
 )[,c(.SD,list(select=seq_along(name)))]
 
 
@@ -357,25 +373,81 @@ server <- function(input, output, session) {
   pnl <-reactive({
     
     input$backtest
+    
+    #
     o1_strikes<-isolate(input$o1_strikes_slider)
     if(length(o1_strikes)<1)return(NULL)
+    o1_type<-isolate(as.integer(input$o1_type))
+    if(o1_type<1)return(NULL)
+    o1_option<-as.list(payoffs[o1_type,])
+    o1_direction<-isolate(input$o1_direction)
+    
+    #
     o2_strikes<-isolate(input$o2_strikes_slider)
     if(length(o2_strikes)<1)return(NULL)
-
-    strategy_pnl<-data.table(
-      date=fastPOSIXct(strategy_df$date),
-      pnl=rowSums(cbind(
-        make_option_pnl(model=EP,strike=o1_strikes[2],dir=-1,strategy=strategy_df,vsurf=resampled_spx_vol)$pnl,
-        make_option_pnl(model=EP,strike=o1_strikes[1],dir=+1,strategy=strategy_df,vsurf=resampled_spx_vol)$pnl,
-        make_option_pnl(model=EC,strike=o2_strikes[2],dir=-1,strategy=strategy_df,vsurf=resampled_spx_vol)$pnl,
-        make_option_pnl(model=EC,strike=o2_strikes[1],dir=+1,strategy=strategy_df,vsurf=resampled_spx_vol)$pnl
-      ))
+    o2_type<-isolate(as.integer(input$o2_type))
+    if(o2_type<1)return(NULL)
+    o2_option<-as.list(payoffs[o2_type,])
+    o2_direction<-isolate(input$o2_direction)
+    
+    direction<-c(Long=1,Short=-1)
+    
+    
+    if(length(o1_strikes)>0){
+      o1_results<-mapply(
+        function(model,strike,dir){
+        make_option_pnl(
+          model=model,
+          strike=strike,
+          dir=dir,
+          strategy=strategy_df,
+          vsurf=resampled_spx_vol
+        )$pnl
+        },
+        strike=o1_strikes,
+        dir=direction[as.integer(o1_direction)]*o1_option$size,
+        MoreArgs=list(model=o1_option$model[[1]]),
+        SIMPLIFY=FALSE
+      )
+    }else{
+      o1_results<-list()
+    }
+    
+    if(length(o2_strikes)>0){
+      o2_results<-mapply(
+        function(model,strike,dir){
+          make_option_pnl(
+            model=model,
+            strike=strike,
+            dir=dir,
+            strategy=strategy_df,
+            vsurf=resampled_spx_vol
+          )$pnl
+        },
+        strike=o2_strikes,
+        dir=direction[as.integer(o2_direction)]*o2_option$size,
+        MoreArgs=list(model=o2_option$model[[1]],dir=direction[as.integer(o2_direction)]),
+        SIMPLIFY=FALSE
+      )
+    }else{
+      o2_results<-list()
+    }
+    
+    all_results<-c(o1_results,o2_results)
+    
+    if(length(all_results)<1)return(NULL)
+    
+    strategy_pnl<-data.table( 
+      date=fastPOSIXct(strategy_df$date), 
+      pnl=rowSums(do.call(cbind,all_results))
     )
     
     list(
       strategy_pnl=strategy_pnl,
-      o1_strikes=o1_strikes,
-      o2_strikes=o2_strikes
+      o1_option=o1_option,
+      o1_direction=o1_direction,
+      o2_option=o2_option,
+      o2_direction=o2_direction
     )
     
   })
@@ -395,45 +467,19 @@ server <- function(input, output, session) {
   })
   
   output$backtestPlot <- renderPlot({
-     
      strategy_pnl<-pnl()
      if(is.null(strategy_pnl))return(NULL)
-     
      g1<-strategy_pnl$strategy_pnl %>% ggplot() + 
       geom_line(aes(x=date,y=pnl)) +
-      geom_vline(xintercept = strategy_pnl$strategy_pnl$date[which(strategy_df$days==1)],col="red",alpha=0.25) +
-      ggtitle(paste0(
-         "Long Put Strike: ",
-         round(100*strategy_pnl$o1_strikes[2],digits=1),
-         "  | Short Put Strike: ",
-         round(100*strategy_pnl$o1_strikes[1],digits=1),
-         "  | Long Call Strike: ",
-         round(100*strategy_pnl$o2_strikes[1],digits=1), 
-         "  | Short Call Strike: ",
-         round(100*strategy_pnl$o2_strikes[2],digits=1)
-      ))
+      geom_vline(xintercept = strategy_pnl$strategy_pnl$date[which(strategy_df$days==1)],col="red",alpha=0.25) 
      
     plot(g1)
    })
   
   output$backtestHist <- renderPlot({
-    
     strategy_pnl<-pnl()
     if(is.null(strategy_pnl))return(NULL)
-    
-    g1<-strategy_pnl$strategy_pnl %>% ggplot() + 
-      geom_histogram(aes(c(0,diff(pnl))),bins=100) +
-      ggtitle(paste0(
-         "Long Put Strike: ",
-         round(100*strategy_pnl$o1_strikes[2],digits=1),
-         "  | Short Put Strike: ",
-         round(100*strategy_pnl$o1_strikes[1],digits=1),
-         "  | Long Call Strike: ",
-         round(100*strategy_pnl$o2_strikes[1],digits=1), 
-         "  | Short Call Strike: ",
-         round(100*strategy_pnl$o2_strikes[2],digits=1)
-      ))
-    
+    g1<-strategy_pnl$strategy_pnl %>% ggplot() + geom_histogram(aes(c(0,diff(pnl))),bins=100)
     plot(g1)
   })
 }

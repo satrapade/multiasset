@@ -228,6 +228,9 @@ make_option_pnl<-function(
 
 strategy_df<-fread("strategy_df.csv")
 resampled_spx_vol<- "compressed_resampled_spx_vol.txt" %>% scan(character()) %>% decompress
+x<-resampled_spx_vol[Strike==3000]
+x$Strike<-9999
+resampled_spx_vol<-rbind(resampled_spx_vol,x)
 
 #
 # compute option pnls
@@ -240,11 +243,13 @@ system.time(strategy_pnl<-data.table(
   ))
 ))
 
-g1<-strategy_pnl %>% ggplot() + geom_line(aes(x=date,y=pnl))
+g1<-strategy_pnl %>% ggplot() + geom_line(aes(x=date,y=pnl)) +
+  geom_vline(xintercept = strategy_pnl$date[which(strategy_df$days==1)],col="red",alpha=0.25)
   
 plot(g1)
 
+g2<-strategy_pnl %>% ggplot() + geom_histogram(aes(c(0,diff(pnl)))) 
 
-
+plot(g2)
 
 

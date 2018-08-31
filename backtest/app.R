@@ -233,6 +233,9 @@ make_option_pnl<-function(
 
 strategy_df<-fread("strategy_df.csv")
 resampled_spx_vol<- "compressed_resampled_spx_vol.txt" %>% scan(character()) %>% decompress
+x<-resampled_spx_vol[Strike==3000]
+x$Strike<-9999
+resampled_spx_vol<-rbind(resampled_spx_vol,x)
 
 
 
@@ -240,7 +243,7 @@ resampled_spx_vol<- "compressed_resampled_spx_vol.txt" %>% scan(character()) %>%
 ui <- fluidPage(
    
    # Application title
-   titlePanel("Rolling SPX put-spread backtest"),
+   titlePanel("Rolling SPX option backtest"),
    
    # Sidebar with a slider input for number of bins 
    sidebarLayout(
@@ -273,8 +276,9 @@ ui <- fluidPage(
       )),
     # Show a plot of the generated distribution
       mainPanel(
-         plotOutput("backtestPlot"),
-         verbatimTextOutput("summary")
+        verbatimTextOutput("summary"),
+        plotOutput("backtestPlot"),
+        plotOutput("backtestHist")
       )
   )
 )
@@ -304,7 +308,9 @@ server <- function(input, output) {
     list(
       strategy_pnl=strategy_pnl,
       short_put_strike=short_put_strike,
-      long_put_strike=long_put_strike
+      long_put_strike=long_put_strike,
+      short_call_strike=short_call_strike,
+      long_call_strike=long_call_strike
     )
     
   })
@@ -328,15 +334,40 @@ server <- function(input, output) {
      
      g1<-strategy_pnl$strategy_pnl %>% ggplot() + 
       geom_line(aes(x=date,y=pnl)) +
+      geom_vline(xintercept = strategy_pnl$strategy_pnl$date[which(strategy_df$days==1)],col="red",alpha=0.25) +
       ggtitle(paste0(
          "Long Put Strike: ",
          round(100*strategy_pnl$long_put_strike,digits=1),
          "  | Short Put Strike: ",
-         round(100*strategy_pnl$short_put_strike,digits=1)
+         round(100*strategy_pnl$short_put_strike,digits=1),
+         "  | Long Call Strike: ",
+         round(100*strategy_pnl$long_call_strike,digits=1), 
+         "  | Short Call Strike: ",
+         round(100*strategy_pnl$short_call_strike,digits=1)
       ))
      
     plot(g1)
    })
+  
+  output$backtestHist <- renderPlot({
+    
+    strategy_pnl<-pnl()
+    
+    g1<-strategy_pnl$strategy_pnl %>% ggplot() + 
+      geom_histogram(aes(c(0,diff(pnl)))) +
+      ggtitle(paste0(
+        "Long Put Strike: ",
+        round(100*strategy_pnl$long_put_strike,digits=1),
+        "  | Short Put Strike: ",
+        round(100*strategy_pnl$short_put_strike,digits=1),
+        "  | Long Call Strike: ",
+        round(100*strategy_pnl$long_call_strike,digits=1), 
+        "  | Short Call Strike: ",
+        round(100*strategy_pnl$short_call_strike,digits=1)
+      ))
+    
+    plot(g1)
+  })
 }
 
 # Run the application 

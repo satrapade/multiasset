@@ -21,6 +21,7 @@ require(stringi)
 require(Matrix)
 require(akima)
 require(ggplot2)
+require(shinyWidgets)
 
 source("https://raw.githubusercontent.com/satrapade/utility/master/utility_functions.R")
 source("https://raw.githubusercontent.com/satrapade/pairs/master/utility/query.R")
@@ -86,6 +87,10 @@ EP  <- function(S,X,t,r,v)
   X*exp(-r*t)*pnorm(-d2)-S*pnorm(-d1)
 }
 
+ECS<-function(S,X1,X2,t,r,v1,v2){}
+EPS<-function(S,X1,X2,t,r,v1,v2){}
+ESTRAG<-function(S,X1,X2,t,r,v1,v2){}
+ESTRAD<-function(S,X,t,r,v){}
 
 
 # apply a set of filters to all dates 
@@ -237,6 +242,38 @@ x<-resampled_spx_vol[Strike==3000]
 x$Strike<-9999
 resampled_spx_vol<-rbind(resampled_spx_vol,x)
 
+option_strategies<-list(
+  None=0,                      
+  Call=1,
+  Put=2,
+  Stradle=3,
+  CallSpread=4,
+  PutSpread=5,
+  RiskReversal=6,
+  Butterfly=6
+)
+
+option_payoffs<-list(
+  None=function(spot,strikes)return(0),
+  Call=function(spot,strikes)max(spot-strikes[1],0),
+  Put=function(spot,strikes)max(strikes[1]-spot,0),
+  CallSpread=function(spot,strikes)max(spot-strikes[1],0)-max(spot-strikes[2]),
+  PutSpread=function(spot,strikes)max(strikes[1]-spot,0)-max(strikes[2]-spot,0),
+  RiskReversal=function(spot,strikes)max(spot-strikes[1],0)-max(strikes[2]-spot,0),
+  Butterfly=function(spot,strikes)max(spot-strikes[1],0)-2*max(spot-strikes[2],2)+max(strikes[3]-spot,0)
+)
+
+payoffs<-rbind(
+  data.table(name="None",model=function(...)0,strike_count=0,payoff=function(spot,strikes)return(0)),
+  data.table(name="Call",model=EC,strike_count=1,payoff=function(spot,strikes)return(0)),
+  data.table(name="Put",model=EP,strike_count=1,payoff=function(spot,strikes)return(0)),
+  data.table(name="CallSpread",model=ECS,strike_count=2,payoff=function(spot,strikes)return(0)),
+  data.table(name="PutSpread",model=EPS,strike_count=2,payoff=function(spot,strikes)return(0)),
+  data.table(name="Strangle",model=ESTRAG,strike_count=2,payoff=function(spot,strikes)return(0)),
+  data.table(name="Straddle",model=ESTRAD,strike_count=1,payoff=function(spot,strikes)return(0)),
+  data.table(name="Butterfly",model=ESTRAD,strike_count=3,payoff=function(spot,strikes)return(0))
+)[,c(.SD,list(select=seq_along(name)))]
+
 
 
 # Define UI for application that draws a histogram
@@ -247,33 +284,27 @@ ui <- fluidPage(
    
    # Sidebar with a slider input for number of bins 
    sidebarLayout(
-      sidebarPanel(wellPanel(
-         sliderInput("short_put_strike",
-                     "Short put strike:",
-                     min = 0.75,
-                     max = 1,
-                     value = 0.9
-         ),
-        sliderInput("long_put_strike",
-                    "Long put strike:",
-                    min = 0.75,
-                    max = 1,
-                    value = 0.8
+      sidebarPanel(
+        fluidRow(
+          column(width=3,h3("Payoff")),
+          column(width=2,h3("Direction")),
+          column(width=7,h3("Strikes"))
         ),
-        sliderInput("short_call_strike",
-                    "Short call strike:",
-                    min = 1,
-                    max = 1.25,
-                    value = 1.25
+        tags$hr(),
+        fluidRow(
+          column(width=3,selectInput("o1_type",label=NULL, choices=setNames(payoffs$select,payoffs$name),selected=1)),
+          column(width=2,selectInput("o1_direction", label = NULL, choices = list("Long" = 1, "Short" = 2),selected=4)),
+          column(width=7,uiOutput("o1_strikes"))
         ),
-        sliderInput("long_call_strike",
-                    "Long call strike:",
-                    min = 1,
-                    max = 1.25,
-                    value = 1.25
+        tags$hr(),
+        fluidRow(
+          column(width=3,selectInput("o2_type", label = NULL, choices=setNames(payoffs$select,payoffs$name),selected=1)),
+          column(width=2,selectInput("o2_direction", label = NULL, choices = list("Long" = 1, "Short" = 2),selected=3)),
+          column(width=7,uiOutput("o2_strikes"))
         ),
-        actionButton("backtest","Backtest")
-      )),
+        tags$hr(),
+        fluidRow(actionButton("backtest",h2("GO!")))
+      ),
     # Show a plot of the generated distribution
       mainPanel(
         verbatimTextOutput("summary"),
@@ -285,38 +316,73 @@ ui <- fluidPage(
 
 
 # Define server logic required to draw a histogram
-server <- function(input, output) {
+server <- function(input, output, session) {
+   
+  output$o1_strikes<-renderUI({
+    
+    o1_type<-as.integer(input$o1_type)
+    if(o1_type<1)return(NULL)
+    
+    o1_option<-as.list(payoffs[o1_type,])
+    
+    noUiSliderInput(
+      inputId="o1_strikes_slider",
+      label=NULL,
+      min = 0.75,
+      max = 1.25,
+      value = seq(from=0.75,to=1.25,length.out = o1_option$strike_count)
+    )
+    
+    
+  })
+  
+   output$o2_strikes<-renderUI({
+    
+    o2_type<-as.integer(input$o2_type)
+    if(o2_type<1)return(NULL)
+    
+    o2_option<-as.list(payoffs[o2_type,])
+    
+    noUiSliderInput(
+      inputId="o2_strikes_slider",
+      label=NULL,
+      min = 0.75,
+      max = 1.25,
+      value = seq(from=0.75,to=1.25,length.out = o2_option$strike_count)
+    )
+    
+    
+  })
    
   pnl <-reactive({
     
     input$backtest
-    short_put_strike<-isolate(input$short_put_strike)
-    long_put_strike<-isolate(input$long_put_strike)
-    short_call_strike<-isolate(input$short_call_strike)
-    long_call_strike<-isolate(input$long_call_strike)
-    
+    o1_strikes<-isolate(input$o1_strikes_slider)
+    if(length(o1_strikes)<1)return(NULL)
+    o2_strikes<-isolate(input$o2_strikes_slider)
+    if(length(o2_strikes)<1)return(NULL)
+
     strategy_pnl<-data.table(
       date=fastPOSIXct(strategy_df$date),
       pnl=rowSums(cbind(
-        make_option_pnl(model=EP,strike=short_put_strike,dir=-1,strategy=strategy_df,vsurf=resampled_spx_vol)$pnl,
-        make_option_pnl(model=EP,strike=long_put_strike,dir=+1,strategy=strategy_df,vsurf=resampled_spx_vol)$pnl,
-        make_option_pnl(model=EC,strike=short_call_strike,dir=-1,strategy=strategy_df,vsurf=resampled_spx_vol)$pnl,
-        make_option_pnl(model=EC,strike=long_call_strike,dir=+1,strategy=strategy_df,vsurf=resampled_spx_vol)$pnl
+        make_option_pnl(model=EP,strike=o1_strikes[2],dir=-1,strategy=strategy_df,vsurf=resampled_spx_vol)$pnl,
+        make_option_pnl(model=EP,strike=o1_strikes[1],dir=+1,strategy=strategy_df,vsurf=resampled_spx_vol)$pnl,
+        make_option_pnl(model=EC,strike=o2_strikes[2],dir=-1,strategy=strategy_df,vsurf=resampled_spx_vol)$pnl,
+        make_option_pnl(model=EC,strike=o2_strikes[1],dir=+1,strategy=strategy_df,vsurf=resampled_spx_vol)$pnl
       ))
     )
     
     list(
       strategy_pnl=strategy_pnl,
-      short_put_strike=short_put_strike,
-      long_put_strike=long_put_strike,
-      short_call_strike=short_call_strike,
-      long_call_strike=long_call_strike
+      o1_strikes=o1_strikes,
+      o2_strikes=o2_strikes
     )
     
   })
   
   output$summary<-renderText({
     strategy_pnl<-pnl()
+    if(is.null(strategy_pnl))return(NULL)
     final_pnl<-tail(strategy_pnl$strategy_pnl$pnl,1)
     max_draw<-max(cummax(strategy_pnl$strategy_pnl$pnl)-strategy_pnl$strategy_pnl$pnl)
     paste(
@@ -331,19 +397,20 @@ server <- function(input, output) {
   output$backtestPlot <- renderPlot({
      
      strategy_pnl<-pnl()
+     if(is.null(strategy_pnl))return(NULL)
      
      g1<-strategy_pnl$strategy_pnl %>% ggplot() + 
       geom_line(aes(x=date,y=pnl)) +
       geom_vline(xintercept = strategy_pnl$strategy_pnl$date[which(strategy_df$days==1)],col="red",alpha=0.25) +
       ggtitle(paste0(
          "Long Put Strike: ",
-         round(100*strategy_pnl$long_put_strike,digits=1),
+         round(100*strategy_pnl$o1_strikes[2],digits=1),
          "  | Short Put Strike: ",
-         round(100*strategy_pnl$short_put_strike,digits=1),
+         round(100*strategy_pnl$o1_strikes[1],digits=1),
          "  | Long Call Strike: ",
-         round(100*strategy_pnl$long_call_strike,digits=1), 
+         round(100*strategy_pnl$o2_strikes[1],digits=1), 
          "  | Short Call Strike: ",
-         round(100*strategy_pnl$short_call_strike,digits=1)
+         round(100*strategy_pnl$o2_strikes[2],digits=1)
       ))
      
     plot(g1)
@@ -352,18 +419,19 @@ server <- function(input, output) {
   output$backtestHist <- renderPlot({
     
     strategy_pnl<-pnl()
+    if(is.null(strategy_pnl))return(NULL)
     
     g1<-strategy_pnl$strategy_pnl %>% ggplot() + 
-      geom_histogram(aes(c(0,diff(pnl)))) +
+      geom_histogram(aes(c(0,diff(pnl))),bins=100) +
       ggtitle(paste0(
-        "Long Put Strike: ",
-        round(100*strategy_pnl$long_put_strike,digits=1),
-        "  | Short Put Strike: ",
-        round(100*strategy_pnl$short_put_strike,digits=1),
-        "  | Long Call Strike: ",
-        round(100*strategy_pnl$long_call_strike,digits=1), 
-        "  | Short Call Strike: ",
-        round(100*strategy_pnl$short_call_strike,digits=1)
+         "Long Put Strike: ",
+         round(100*strategy_pnl$o1_strikes[2],digits=1),
+         "  | Short Put Strike: ",
+         round(100*strategy_pnl$o1_strikes[1],digits=1),
+         "  | Long Call Strike: ",
+         round(100*strategy_pnl$o2_strikes[1],digits=1), 
+         "  | Short Call Strike: ",
+         round(100*strategy_pnl$o2_strikes[2],digits=1)
       ))
     
     plot(g1)
@@ -372,4 +440,3 @@ server <- function(input, output) {
 
 # Run the application 
 shinyApp(ui = ui, server = server)
-

@@ -87,10 +87,7 @@ EP  <- function(S,X,t,r,v)
   X*exp(-r*t)*pnorm(-d2)-S*pnorm(-d1)
 }
 
-ECS<-function(S,X1,X2,t,r,v1,v2){}
-EPS<-function(S,X1,X2,t,r,v1,v2){}
-ESTRAG<-function(S,X1,X2,t,r,v1,v2){}
-ESTRAD<-function(S,X,t,r,v){}
+ES<-function(S,X,t,r,v)EP(S,X,t,r,v)+EC(S,X,t,r,v)
 
 
 # apply a set of filters to all dates 
@@ -204,6 +201,8 @@ interpolate_vol<-function(date,strike,days,vsurf)
   ))
 }
 
+
+
 #
 #
 #
@@ -234,7 +233,43 @@ make_option_pnl<-function(
   )
 }
 
+#
+#
+#
 
+backtest_option<-function(option){
+  
+  if(length(option$strike[[1]])<1)return(list(data.table(
+    strike=option$strike,
+    yfrac=strategy_df$yfrac,
+    vol=rep(0,nrow(strategy_df)),
+    close=strategy$close,
+    reval=rep(0,nrow(strategy_df)),
+    cash_start=rep(0,nrow(strategy_df)),
+    cash_end=rep(0,nrow(strategy_df)),
+    cash=rep(0,nrow(strategy_df)),
+    pnl=rep(0,nrow(strategy_df))
+  )))
+  
+  option_results<-mapply(
+    function(model,strike,dir){
+      make_option_pnl(
+        model=model,
+        strike=strike,
+        dir=dir,
+        strategy=strategy_df,
+        vsurf=resampled_spx_vol
+      )$pnl
+    },
+    strike=option$strike[[1]],
+    dir=option$size[[1]],
+    model=option$model[[1]],
+    SIMPLIFY=FALSE
+  )
+  
+  option_results
+  
+}
 
 strategy_df<-fread("strategy_df.csv")
 resampled_spx_vol<- "compressed_resampled_spx_vol.txt" %>% scan(character()) %>% decompress
@@ -263,34 +298,65 @@ option_payoffs<-list(
   Butterfly=function(spot,strikes)max(spot-strikes[1],0)-2*max(spot-strikes[2],2)+max(strikes[3]-spot,0)
 )
 
+#
+# to be used by the app
+#
+
+app_env<-environment()
+
 payoffs<-rbind(
-  data.table(
-    name="None",model=function(...)0,strike_count=0,size=numeric(0),payoff=function(spot,strikes)return(0)
+  data.table( # No model
+    name="None",model=list(list()),strike=list(),size=list()
   ),
-  data.table(
-    name="Call",model=EC,strike_count=1,size=c(1),payoff=function(spot,strikes)return(0)
+  data.table( # European-style call
+    name="Call",model=list(list(EC)),strike=list(c(1)),size=list(c(1))
   ),
-  data.table(
-    name="Put",model=EP,strike_count=1,size=c(1),payoff=function(spot,strikes)return(0)
+  data.table( # European-style pus
+    name="Put",model=list(list(EP)),strike=list(c(1)),size=list(c(1))
   ),
-  data.table(
-    name="CallSpread",model=ECS,strike_count=2,size=c(1,-1),payoff=function(spot,strikes)return(0)
+  data.table( # Call spread
+    name="CallSpread",model=list(list(EC,EC)),strike=list(c(1,1.15)),size=list(c(1,-1))
   ),
-  data.table(
-    name="PutSpread",model=EPS,strike_count=2,size=c(-1,1),payoff=function(spot,strikes)return(0)
+  data.table( # Put spread
+    name="PutSpread",model=list(list(EP,EP)),strike=list(c(0.85,1)),size=list(c(-1,1))
   ),
-  data.table(
-    name="Strangle",model=ESTRAG,strike_count=2,size=c(1,1),payoff=function(spot,strikes)return(0)
+  data.table( # Strangle
+    name="Strangle",model=list(list(EP,EC)),strike=list(c(0.85,1.15)),size=list(c(1,1))
   ),
-  data.table(
-    name="Straddle",model=ESTRAD,strike_count=1,size=c(1),payoff=function(spot,strikes)return(0)
+  data.table( # Straddle
+    name="Straddle",model=list(list(ES)),strike=list(c(1)),size=list(c(1))
   ),
-  data.table(
-    name="Butterfly",model=ESTRAD,strike_count=3,size=c(1,-2,1),payoff=function(spot,strikes)return(0)
+  data.table( # Butterfly
+    name="Butterfly",model=list(list(EP,EP,EP)),strike=list(c(0.85,1,1.15)),size=list(c(1,-2,1))
   )
 )[,c(.SD,list(select=seq_along(name)))]
 
+payoff_1<-payoffs[1,]
+payoff_2<-payoffs[1,]
 
+model_payoff<-function(payoff){
+  
+  if(length(payoff$strike[[1]])<1)return(rep(0,25))
+  MoreArgs<-list(
+    models=payoff$model[[1]],
+    strikes=payoff$strike[[1]],
+    sizes=payoff$size[[1]]
+  ) 
+  
+  spots<-seq(0.75,1.25,length.out=25)
+  
+  payoff_fun<-function(spot,models,strikes,sizes)sum(mapply(
+      function(spot,model,strike,size)size*model(S=spot,X=strike,t=0.01,r=0,v=0.1),
+      model=models,
+      strike=strikes,
+      size=sizes,
+      MoreArgs=list(spot=spot)
+  ))
+  
+  
+  mapply(payoff_fun, spot=spots, MoreArgs = MoreArgs)
+  
+}
 
 # Define UI for application that draws a histogram
 ui <- fluidPage(
@@ -303,21 +369,25 @@ ui <- fluidPage(
       sidebarPanel(
         fluidRow(
           column(width=3,h3("Payoff")),
-          column(width=2,h3("Direction")),
-          column(width=7,h3("Strikes"))
+          column(width=3,h3("Direction")),
+          column(width=6,h3("Strikes"))
         ),
         tags$hr(),
+        fluidRow(width=12,plotOutput("o1_payoff_plot",height="100px")),
         fluidRow(
           column(width=3,selectInput("o1_type",label=NULL, choices=setNames(payoffs$select,payoffs$name),selected=1)),
-          column(width=2,selectInput("o1_direction", label = NULL, choices = list("Long" = 1, "Short" = 2),selected=4)),
-          column(width=7,uiOutput("o1_strikes"))
+          column(width=3,selectInput("o1_direction", label = NULL, choices = list("Long" = 1, "Short" = 2),selected=4)),
+          column(width=6,uiOutput("o1_strikes"))
         ),
         tags$hr(),
+        fluidRow(width=12,plotOutput("o2_payoff_plot",height="100px")),
         fluidRow(
           column(width=3,selectInput("o2_type", label = NULL, choices=setNames(payoffs$select,payoffs$name),selected=1)),
-          column(width=2,selectInput("o2_direction", label = NULL, choices = list("Long" = 1, "Short" = 2),selected=3)),
-          column(width=7,uiOutput("o2_strikes"))
+          column(width=3,selectInput("o2_direction", label = NULL, choices = list("Long" = 1, "Short" = 2),selected=3)),
+          column(width=6,uiOutput("o2_strikes"))
         ),
+        tags$hr(),
+        fluidRow(width=12,plotOutput("payoff_plot",height="100px")),
         tags$hr(),
         fluidRow(actionButton("backtest",h2("GO!")))
       ),
@@ -333,108 +403,102 @@ ui <- fluidPage(
 
 # Define server logic required to draw a histogram
 server <- function(input, output, session) {
-   
+  
   output$o1_strikes<-renderUI({
-    
     o1_type<-as.integer(input$o1_type)
     if(o1_type<1)return(NULL)
-    
     o1_option<-as.list(payoffs[o1_type,])
-    
     noUiSliderInput(
-      inputId="o1_strikes_slider",
-      label=NULL,
-      min = 0.75,
-      max = 1.25,
-      value = seq(from=0.75,to=1.25,length.out = o1_option$strike_count)
+      inputId="o1_strikes_slider", label=NULL, min=0.75, max=1.25, step=0.01, value=o1_option$strike[[1]]
     )
-    
-    
   })
   
-   output$o2_strikes<-renderUI({
-    
+  output$o2_strikes<-renderUI({
     o2_type<-as.integer(input$o2_type)
     if(o2_type<1)return(NULL)
-    
     o2_option<-as.list(payoffs[o2_type,])
-    
     noUiSliderInput(
-      inputId="o2_strikes_slider",
-      label=NULL,
-      min = 0.75,
-      max = 1.25,
-      value = seq(from=0.75,to=1.25,length.out = o2_option$strike_count)
+      inputId="o2_strikes_slider", label=NULL, min=0.75, max=1.25, step=0.01, value=o2_option$strike[[1]]
     )
-    
-    
   })
+  
+ selected_payoff_1<-reactive({
+    o1_type<-as.integer(input$o1_type)
+    if(o1_type<1)return(NULL)
+    o1_direction<-c(Long=1,Short=-1)[as.integer(input$o1_direction)]
+    app_env$payoff_1<-payoffs[o1_type,]
+    if(length(app_env$payoff_1$size[[1]])>0){
+      app_env$payoff_1$size<-list(list(app_env$payoff_1$size[[1]]*o1_direction))
+    }
+    o1_strikes<-input$o1_strikes_slider
+    if(
+      length(app_env$payoff_1$strike)>0 & 
+      length(app_env$payoff_1$strike[[1]])==length(o1_strikes)
+    ){
+      app_env$payoff_1$strike<-list(list(o1_strikes))
+    }
+    app_env$payoff_1
+ })
+
+ selected_payoff_2<-reactive({
+   o2_type<-as.integer(input$o2_type)
+   if(o2_type<1)return(NULL)
+   o2_direction<-c(Long=1,Short=-1)[as.integer(input$o2_direction)]
+   app_env$payoff_2<-payoffs[o2_type,]
+   if(length(app_env$payoff_2$size[[1]])>0){
+    app_env$payoff_2$size<-list(list(app_env$payoff_2$size[[1]]*o2_direction))
+   }
+   o2_strikes<-input$o2_strikes_slider
+   if(
+     length(app_env$payoff_2$strike)>0 & 
+     length(app_env$payoff_2$strike[[1]])==length(o2_strikes)
+   ){
+     app_env$payoff_2$strike<-list(list(o2_strikes))
+   }
+   app_env$payoff_2
+ })
+ 
+  output$payoff_plot <- renderPlot({
+    the_payoff<-selected_payoff_1()
+    o1_pay<-model_payoff(the_payoff)  
+    the_payoff<-selected_payoff_2()
+    o2_pay<-model_payoff(the_payoff)  
+    both_pay<-o1_pay+o2_pay
+    op<-par()$mai
+    par(mai=c(0,0,0,0))
+    plot(both_pay,axes=FALSE,xlab="",ylab="",type="l",lwd=3)
+    par(mai=op)
+  })
+ 
+  output$o1_payoff_plot <- renderPlot({
+      the_payoff<-selected_payoff_1()
+      o1_pay<-model_payoff(the_payoff)  
+      op<-par()$mai
+      par(mai=c(0,0,0,0))
+      plot(o1_pay,axes=FALSE,xlab="",ylab="",type="l",lwd=3)
+      par(mai=op)
+  })
+  
+  output$o2_payoff_plot <- renderPlot({
+    the_payoff<-selected_payoff_2()
+    o2_pay<-model_payoff(the_payoff)  
+    op<-par()$mai
+    par(mai=c(0,0,0,0))
+    plot(o2_pay,axes=FALSE,xlab="",ylab="",type="l",lwd=3)
+    par(mai=op)
+  })
+  
+  
    
   pnl <-reactive({
     
     input$backtest
-    
-    #
-    o1_strikes<-isolate(input$o1_strikes_slider)
-    if(length(o1_strikes)<1)return(NULL)
-    o1_type<-isolate(as.integer(input$o1_type))
-    if(o1_type<1)return(NULL)
-    o1_option<-as.list(payoffs[o1_type,])
-    o1_direction<-isolate(input$o1_direction)
-    
-    #
-    o2_strikes<-isolate(input$o2_strikes_slider)
-    if(length(o2_strikes)<1)return(NULL)
-    o2_type<-isolate(as.integer(input$o2_type))
-    if(o2_type<1)return(NULL)
-    o2_option<-as.list(payoffs[o2_type,])
-    o2_direction<-isolate(input$o2_direction)
-    
-    direction<-c(Long=1,Short=-1)
-    
-    
-    if(length(o1_strikes)>0){
-      o1_results<-mapply(
-        function(model,strike,dir){
-        make_option_pnl(
-          model=model,
-          strike=strike,
-          dir=dir,
-          strategy=strategy_df,
-          vsurf=resampled_spx_vol
-        )$pnl
-        },
-        strike=o1_strikes,
-        dir=direction[as.integer(o1_direction)]*o1_option$size,
-        MoreArgs=list(model=o1_option$model[[1]]),
-        SIMPLIFY=FALSE
-      )
-    }else{
-      o1_results<-list()
-    }
-    
-    if(length(o2_strikes)>0){
-      o2_results<-mapply(
-        function(model,strike,dir){
-          make_option_pnl(
-            model=model,
-            strike=strike,
-            dir=dir,
-            strategy=strategy_df,
-            vsurf=resampled_spx_vol
-          )$pnl
-        },
-        strike=o2_strikes,
-        dir=direction[as.integer(o2_direction)]*o2_option$size,
-        MoreArgs=list(model=o2_option$model[[1]],dir=direction[as.integer(o2_direction)]),
-        SIMPLIFY=FALSE
-      )
-    }else{
-      o2_results<-list()
-    }
-    
+    o1_option<-isolate(selected_payoff_1())
+    o2_option<-isolate(selected_payoff_2())
+    o1_results<-backtest_option(o1_option)
+    o2_results<-backtest_option(o2_option)
     all_results<-c(o1_results,o2_results)
-    
+
     if(length(all_results)<1)return(NULL)
     
     strategy_pnl<-data.table( 
@@ -445,9 +509,7 @@ server <- function(input, output, session) {
     list(
       strategy_pnl=strategy_pnl,
       o1_option=o1_option,
-      o1_direction=o1_direction,
-      o2_option=o2_option,
-      o2_direction=o2_direction
+      o2_option=o2_option
     )
     
   })

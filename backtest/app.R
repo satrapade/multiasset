@@ -11,6 +11,7 @@ library(shiny)
 
 require(data.table)
 require(scales)
+require(RcppRoll)
 require(magrittr)
 require(fasttime)
 require(lubridate)
@@ -240,16 +241,16 @@ make_option_pnl<-function(
 backtest_option<-function(option){
   
   if(length(option$strike[[1]])<1)return(list(data.table(
-    strike=option$strike,
+    strike=0,
     yfrac=strategy_df$yfrac,
     vol=rep(0,nrow(strategy_df)),
-    close=strategy$close,
+    close=strategy_df$close,
     reval=rep(0,nrow(strategy_df)),
     cash_start=rep(0,nrow(strategy_df)),
     cash_end=rep(0,nrow(strategy_df)),
     cash=rep(0,nrow(strategy_df)),
     pnl=rep(0,nrow(strategy_df))
-  )))
+  )$pnl))
   
   option_results<-mapply(
     function(model,strike,dir){
@@ -367,29 +368,39 @@ ui <- fluidPage(
    # Sidebar with a slider input for number of bins 
    sidebarLayout(
       sidebarPanel(
+        fluidRow(width=12,plotOutput("payoff_plot",height="100px")),
+        tags$hr(),
+        fluidRow(
+          column(width=6,noUiSliderInput(
+            inputId="sl_slider", label="Training stopLoss (points)", min=0, max=2000, step=10, value=2000
+          )),
+          column(width=6,noUiSliderInput(
+            inputId="w_slider", label="Window (days)", min=0, max=300, step=10, value=300
+          ))
+        ),
+        tags$hr(),
         fluidRow(
           column(width=3,h3("Payoff")),
           column(width=3,h3("Direction")),
           column(width=6,h3("Strikes"))
         ),
         tags$hr(),
+        fluidRow(width=12,uiOutput("o1_strikes")),
         fluidRow(width=12,plotOutput("o1_payoff_plot",height="100px")),
         fluidRow(
           column(width=3,selectInput("o1_type",label=NULL, choices=setNames(payoffs$select,payoffs$name),selected=1)),
-          column(width=3,selectInput("o1_direction", label = NULL, choices = list("Long" = 1, "Short" = 2),selected=4)),
-          column(width=6,uiOutput("o1_strikes"))
+          column(width=3,selectInput("o1_direction", label = NULL, choices = list("Long" = 1, "Short" = 2),selected=4))
         ),
         tags$hr(),
+        fluidRow(width=12,uiOutput("o2_strikes")),
         fluidRow(width=12,plotOutput("o2_payoff_plot",height="100px")),
         fluidRow(
           column(width=3,selectInput("o2_type", label = NULL, choices=setNames(payoffs$select,payoffs$name),selected=1)),
-          column(width=3,selectInput("o2_direction", label = NULL, choices = list("Long" = 1, "Short" = 2),selected=3)),
-          column(width=6,uiOutput("o2_strikes"))
+          column(width=3,selectInput("o2_direction", label = NULL, choices = list("Long" = 1, "Short" = 2),selected=3))
         ),
         tags$hr(),
-        fluidRow(width=12,plotOutput("payoff_plot",height="100px")),
-        tags$hr(),
-        fluidRow(actionButton("backtest",h2("GO!")))
+       
+        fluidRow(actionButton("backtest",h2("BACKTEST")))
       ),
     # Show a plot of the generated distribution
       mainPanel(
@@ -495,15 +506,28 @@ server <- function(input, output, session) {
     input$backtest
     o1_option<-isolate(selected_payoff_1())
     o2_option<-isolate(selected_payoff_2())
+    w<-isolate(input$w_slider)
+    sl<-isolate(input$sl_slider)
+    
+    #
     o1_results<-backtest_option(o1_option)
     o2_results<-backtest_option(o2_option)
     all_results<-c(o1_results,o2_results)
 
     if(length(all_results)<1)return(NULL)
     
+    all_pnl<-rowSums(do.call(cbind,all_results))
+    
+    cum_max_pnl<-c(cummax(all_pnl[1:(w-1)]),roll_max(all_pnl,w))
+    drawdown<-cum_max_pnl-all_pnl
+    roll_drawdown<-c(0,mapply(max,split(drawdown,strategy_df$roll)))[strategy_df$roll-1]
+    
+    
+    stopped_pnl<-cumsum(c(0,diff(all_pnl))*(roll_drawdown<sl))
+    
     strategy_pnl<-data.table( 
       date=fastPOSIXct(strategy_df$date), 
-      pnl=rowSums(do.call(cbind,all_results))
+      pnl=stopped_pnl
     )
     
     list(

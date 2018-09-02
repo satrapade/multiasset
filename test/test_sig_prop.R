@@ -1,13 +1,21 @@
 
 
 
-signal<-runif(100)>0.5
-period<-sort(sample(1:5,100,replace=TRUE))
+xm <- matrix(rnorm(N),ncol=10)
+dts <- seq(from=Sys.Date(),length.out=10,by="days")
+x<- fts(index=dts,data=xm)
 
-x<-cbind(signal)[,rep(1,5)]
-y<-cbind(period)[,rep(1,5)]
-z<-rbind(1:5)[rep(1,100),]
-colSums(x*(y==z))
-mapply(sum,split(signal,period))
+
+
+
+x <- fts(index=seq(from=Sys.Date(),by="days",length.out=100),data=1:100)
+y <- fts(index=seq(from=Sys.Date(),by="days",length.out=100),data=1:100)
+x.mean <- moving.mean(x,20)
+x.sum <- moving.sum(x,20)
+x.prod <- moving.product(x,20)
+x.max <- moving.max(x,20)
+x.min <- moving.min(x,20)
+x.sd <- moving.sd(x,20)
+x.rank <- moving.rank(x,20)
 
 

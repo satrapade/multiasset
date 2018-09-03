@@ -272,11 +272,19 @@ backtest_option<-function(option){
   
 }
 
+dof<-fread("dof.csv")
+dof$Date<-as.Date(dof$Date,format="%Y-%m-%d")
+dof$PnL<-cumsum(dof$PnL)
+
 strategy_df<-fread("strategy_df.csv")
+
 resampled_spx_vol<- "compressed_resampled_spx_vol.txt" %>% scan(character()) %>% decompress
 x<-resampled_spx_vol[Strike==3000]
 x$Strike<-9999
 resampled_spx_vol<-rbind(resampled_spx_vol,x)
+
+
+
 
 option_strategies<-list(
   None=0,                      
@@ -378,6 +386,20 @@ ui <- fluidPage(
             inputId="w_slider", label="Window (days)", min=0, max=300, step=10, value=300
           ))
         ),
+        fluidRow(
+          column(
+            width=5,
+            radioButtons(
+              "strike_select", 
+              "Strike selection",
+               c(
+                 "As selected" = "asis",
+                 "Zero cost on size of second structure" = "zero_size_2",
+                 "Zero cost on stikes of second structure" = "zero_strike_2"
+                )
+            )
+          )
+        ),
         tags$hr(),
         fluidRow(
           column(width=3,h3("Payoff")),
@@ -388,6 +410,7 @@ ui <- fluidPage(
         fluidRow(width=12,uiOutput("o1_strikes")),
         fluidRow(width=12,plotOutput("o1_payoff_plot",height="100px")),
         fluidRow(
+          column(width=3,h3("Structure #1")),
           column(width=3,selectInput("o1_type",label=NULL, choices=setNames(payoffs$select,payoffs$name),selected=1)),
           column(width=3,selectInput("o1_direction", label = NULL, choices = list("Long" = 1, "Short" = 2),selected=4))
         ),
@@ -395,6 +418,7 @@ ui <- fluidPage(
         fluidRow(width=12,uiOutput("o2_strikes")),
         fluidRow(width=12,plotOutput("o2_payoff_plot",height="100px")),
         fluidRow(
+          column(width=3,h3("Structure #2")),
           column(width=3,selectInput("o2_type", label = NULL, choices=setNames(payoffs$select,payoffs$name),selected=1)),
           column(width=3,selectInput("o2_direction", label = NULL, choices = list("Long" = 1, "Short" = 2),selected=3))
         ),
@@ -406,7 +430,7 @@ ui <- fluidPage(
       mainPanel(
         verbatimTextOutput("summary"),
         plotOutput("backtestPlot"),
-        plotOutput("backtestHist")
+        plotOutput("dofPlot")
       )
   )
 )
@@ -555,20 +579,22 @@ server <- function(input, output, session) {
   output$backtestPlot <- renderPlot({
      strategy_pnl<-pnl()
      if(is.null(strategy_pnl))return(NULL)
-     g1<-strategy_pnl$strategy_pnl %>% ggplot() + 
+     x<-strategy_pnl$strategy_pnl[as.character(date,format="%Y-%m-%d") %in% as.character(dof$Date,format="%Y-%m-%d")]
+     g1<- x%>% ggplot() + 
       geom_line(aes(x=date,y=pnl)) +
       geom_vline(xintercept = strategy_pnl$strategy_pnl$date[which(strategy_df$days==1)],col="red",alpha=0.25) 
      
     plot(g1)
    })
   
-  output$backtestHist <- renderPlot({
-    strategy_pnl<-pnl()
-    if(is.null(strategy_pnl))return(NULL)
-    g1<-strategy_pnl$strategy_pnl %>% ggplot() + geom_histogram(aes(c(0,diff(pnl))),bins=100)
+  output$dofPlot <- renderPlot({
+    input$backtest
+    g1<- ggplot(data=dof) + geom_line(aes(x=Date,y=PnL))
     plot(g1)
   })
 }
 
 # Run the application 
 shinyApp(ui = ui, server = server)
+
+

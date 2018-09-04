@@ -342,6 +342,7 @@ payoffs<-rbind(
 
 payoff_1<-payoffs[1,]
 payoff_2<-payoffs[1,]
+payoff_3<-payoffs[1,]
 
 model_payoff<-function(payoff){
   
@@ -367,6 +368,35 @@ model_payoff<-function(payoff){
   
 }
 
+make_backtest<-function(options,sl,w)
+{
+    all_results<-mapply(function(o)do.call(cbind,backtest_option(o)),options,SIMPLIFY = FALSE)
+  
+    if(length(all_results)<1)return(NULL)
+    
+    result_matrix<-do.call(cbind,all_results)
+    all_pnl<-rowSums(result_matrix)
+    
+    cum_max_pnl<-c(cummax(all_pnl[1:(w-1)]),roll_max(all_pnl,w))
+    drawdown<-cum_max_pnl-all_pnl
+    drawdown_by_roll_period<-mapply(max,split(drawdown,strategy_df$roll))
+    roll_drawdown<-c(0,drawdown_by_roll_period)[strategy_df$roll]
+    
+    
+    stopped_pnl<-cumsum(c(0,diff(all_pnl))*(roll_drawdown<sl))
+    
+    strategy_pnl<-data.table( 
+      date=as.Date(strategy_df$date,format="%Y-%m-%d"), 
+      pnl=stopped_pnl
+    )
+    
+    list(
+      strategy_pnl=strategy_pnl,
+      options=options
+    )
+}
+
+    
 # Define UI for application that draws a histogram
 ui <- fluidPage(
    
@@ -387,18 +417,15 @@ ui <- fluidPage(
           ))
         ),
         fluidRow(
-          column(
-            width=5,
-            radioButtons(
-              "strike_select", 
-              "Strike selection",
-               c(
+          column(width=6, radioButtons("strike_select", "Strike selection",c(
                  "As selected" = "asis",
                  "Zero cost on size of second structure" = "zero_size_2",
                  "Zero cost on stikes of second structure" = "zero_strike_2"
-                )
-            )
-          )
+          ))),
+          column(width=6, radioButtons("plot_select", "Plot select",c(
+                 "Whole period" = "whole",
+                 "Live IDOF period" = "idof"
+          )))
         ),
         tags$hr(),
         fluidRow(
@@ -407,23 +434,45 @@ ui <- fluidPage(
           column(width=6,h3("Strikes"))
         ),
         tags$hr(),
-        fluidRow(width=12,uiOutput("o1_strikes")),
-        fluidRow(width=12,plotOutput("o1_payoff_plot",height="100px")),
-        fluidRow(
-          column(width=3,h3("Structure #1")),
-          column(width=3,selectInput("o1_type",label=NULL, choices=setNames(payoffs$select,payoffs$name),selected=1)),
-          column(width=3,selectInput("o1_direction", label = NULL, choices = list("Long" = 1, "Short" = 2),selected=4))
+        tabsetPanel(
+          tabPanel(title="Structure1",
+            fluidRow(width=12,uiOutput("o1_strikes")),
+            fluidRow(width=12,plotOutput("o1_payoff_plot",height="100px")),
+            fluidRow(
+              column(width=3,selectInput("o1_type",label=NULL, choices=setNames(payoffs$select,payoffs$name),selected=1)),
+              column(width=3,selectInput("o1_direction", label = NULL, choices = list("Long" = 1, "Short" = 2),selected=4)),
+              column(width=6,noUiSliderInput(inputId="o1_size", label=NULL, min=0, max=1, step=0.01,value=1))
+            )
+          ),
+          tabPanel(title="Structure2",
+            fluidRow(width=12,uiOutput("o2_strikes")),
+            fluidRow(width=12,plotOutput("o2_payoff_plot",height="100px")),
+            fluidRow(
+              column(width=3,selectInput("o2_type", label = NULL, choices=setNames(payoffs$select,payoffs$name),selected=1)),
+              column(width=3,selectInput("o2_direction", label = NULL, choices = list("Long" = 1, "Short" = 2),selected=3)),
+              column(width=6,noUiSliderInput(inputId="o2_size", label=NULL, min=0, max=1, step=0.01,value=1))
+            )
+          ),
+          tabPanel(title="Structure3",
+            fluidRow(width=12,uiOutput("o3_strikes")),
+            fluidRow(width=12,plotOutput("o3_payoff_plot",height="100px")),
+            fluidRow(
+              column(width=3,selectInput("o3_type", label = NULL, choices=setNames(payoffs$select,payoffs$name),selected=1)),
+              column(width=3,selectInput("o3_direction", label = NULL, choices = list("Long" = 1, "Short" = 2),selected=3)),
+              column(width=6,noUiSliderInput(inputId="o3_size", label=NULL, min=0, max=1, step=0.01,value=1))
+            )
+          ),
+          tabPanel(title="Structure4",
+            fluidRow(width=12,uiOutput("o4_strikes")),
+            fluidRow(width=12,plotOutput("o4_payoff_plot",height="100px")),
+            fluidRow(
+              column(width=3,selectInput("o4_type", label = NULL, choices=setNames(payoffs$select,payoffs$name),selected=1)),
+              column(width=3,selectInput("o4_direction", label = NULL, choices = list("Long" = 1, "Short" = 2),selected=3)),
+              column(width=6,noUiSliderInput(inputId="o4_size", label=NULL, min=0, max=1, step=0.01,value=1))
+            )
+          )
         ),
         tags$hr(),
-        fluidRow(width=12,uiOutput("o2_strikes")),
-        fluidRow(width=12,plotOutput("o2_payoff_plot",height="100px")),
-        fluidRow(
-          column(width=3,h3("Structure #2")),
-          column(width=3,selectInput("o2_type", label = NULL, choices=setNames(payoffs$select,payoffs$name),selected=1)),
-          column(width=3,selectInput("o2_direction", label = NULL, choices = list("Long" = 1, "Short" = 2),selected=3))
-        ),
-        tags$hr(),
-       
         fluidRow(actionButton("backtest",h2("BACKTEST")))
       ),
     # Show a plot of the generated distribution
@@ -439,31 +488,57 @@ ui <- fluidPage(
 # Define server logic required to draw a histogram
 server <- function(input, output, session) {
   
-  output$o1_strikes<-renderUI({
+#
+# strike sliders
+#
+  
+output$o1_strikes<-renderUI({
     o1_type<-as.integer(input$o1_type)
     if(o1_type<1)return(NULL)
     o1_option<-as.list(payoffs[o1_type,])
     noUiSliderInput(
       inputId="o1_strikes_slider", label=NULL, min=0.75, max=1.25, step=0.01, value=o1_option$strike[[1]]
     )
-  })
+})
   
-  output$o2_strikes<-renderUI({
+output$o2_strikes<-renderUI({
     o2_type<-as.integer(input$o2_type)
     if(o2_type<1)return(NULL)
     o2_option<-as.list(payoffs[o2_type,])
     noUiSliderInput(
       inputId="o2_strikes_slider", label=NULL, min=0.75, max=1.25, step=0.01, value=o2_option$strike[[1]]
     )
-  })
+})
   
- selected_payoff_1<-reactive({
+output$o3_strikes<-renderUI({
+    o3_type<-as.integer(input$o3_type)
+    if(o3_type<1)return(NULL)
+    o3_option<-as.list(payoffs[o3_type,])
+    noUiSliderInput(
+      inputId="o3_strikes_slider", label=NULL, min=0.75, max=1.25, step=0.01, value=o3_option$strike[[1]]
+    )
+})
+
+output$o4_strikes<-renderUI({
+    o4_type<-as.integer(input$o4_type)
+    if(o4_type<1)return(NULL)
+    o4_option<-as.list(payoffs[o4_type,])
+    noUiSliderInput(
+      inputId="o4_strikes_slider", label=NULL, min=0.75, max=1.25, step=0.01, value=o4_option$strike[[1]]
+    )
+})
+
+#
+# payoffs
+#
+  
+selected_payoff_1<-reactive({
     o1_type<-as.integer(input$o1_type)
     if(o1_type<1)return(NULL)
     o1_direction<-c(Long=1,Short=-1)[as.integer(input$o1_direction)]
     app_env$payoff_1<-payoffs[o1_type,]
     if(length(app_env$payoff_1$size[[1]])>0){
-      app_env$payoff_1$size<-list(list(app_env$payoff_1$size[[1]]*o1_direction))
+      app_env$payoff_1$size<-list(list(app_env$payoffs[o1_type,]$size[[1]]*o1_direction*input$o1_size))
     }
     o1_strikes<-input$o1_strikes_slider
     if(
@@ -473,15 +548,15 @@ server <- function(input, output, session) {
       app_env$payoff_1$strike<-list(list(o1_strikes))
     }
     app_env$payoff_1
- })
+})
 
- selected_payoff_2<-reactive({
+selected_payoff_2<-reactive({
    o2_type<-as.integer(input$o2_type)
    if(o2_type<1)return(NULL)
    o2_direction<-c(Long=1,Short=-1)[as.integer(input$o2_direction)]
    app_env$payoff_2<-payoffs[o2_type,]
    if(length(app_env$payoff_2$size[[1]])>0){
-    app_env$payoff_2$size<-list(list(app_env$payoff_2$size[[1]]*o2_direction))
+    app_env$payoff_2$size<-list(list(app_env$payoffs[o2_type,]$size[[1]]*o2_direction*input$o2_size))
    }
    o2_strikes<-input$o2_strikes_slider
    if(
@@ -491,78 +566,122 @@ server <- function(input, output, session) {
      app_env$payoff_2$strike<-list(list(o2_strikes))
    }
    app_env$payoff_2
- })
+})
  
-  output$payoff_plot <- renderPlot({
-    the_payoff<-selected_payoff_1()
-    o1_pay<-model_payoff(the_payoff)  
-    the_payoff<-selected_payoff_2()
-    o2_pay<-model_payoff(the_payoff)  
-    both_pay<-o1_pay+o2_pay
-    op<-par()$mai
-    par(mai=c(0,0,0,0))
-    plot(both_pay,axes=FALSE,xlab="",ylab="",type="l",lwd=3)
-    par(mai=op)
-  })
- 
-  output$o1_payoff_plot <- renderPlot({
+selected_payoff_3<-reactive({
+   o3_type<-as.integer(input$o3_type)
+   if(o3_type<1)return(NULL)
+   o3_direction<-c(Long=1,Short=-1)[as.integer(input$o3_direction)]
+   app_env$payoff_3<-payoffs[o3_type,]
+   if(length(app_env$payoff_3$size[[1]])>0){
+    app_env$payoff_3$size<-list(list(app_env$payoffs[o3_type,]$size[[1]]*o3_direction*input$o3_size))
+   }
+   o3_strikes<-input$o3_strikes_slider
+   if(
+     length(app_env$payoff_3$strike)>0 & 
+     length(app_env$payoff_3$strike[[1]])==length(o3_strikes)
+   ){
+     app_env$payoff_3$strike<-list(list(o3_strikes))
+   }
+   app_env$payoff_3
+})
+
+selected_payoff_4<-reactive({
+   o4_type<-as.integer(input$o4_type)
+   if(o4_type<1)return(NULL)
+   o4_direction<-c(Long=1,Short=-1)[as.integer(input$o4_direction)]
+   app_env$payoff_4<-payoffs[o4_type,]
+   if(length(app_env$payoff_4$size[[1]])>0){
+    app_env$payoff_4$size<-list(list(app_env$payoffs[o4_type,]$size[[1]]*o4_direction*input$o4_size))
+   }
+   o4_strikes<-input$o4_strikes_slider
+   if(
+     length(app_env$payoff_4$strike)>0 & 
+     length(app_env$payoff_4$strike[[1]])==length(o4_strikes)
+   ){
+     app_env$payoff_4$strike<-list(list(o4_strikes))
+   }
+   app_env$payoff_4
+})
+
+#
+#
+#
+
+output$o1_payoff_plot <- renderPlot({
       the_payoff<-selected_payoff_1()
       o1_pay<-model_payoff(the_payoff)  
       op<-par()$mai
       par(mai=c(0,0,0,0))
       plot(o1_pay,axes=FALSE,xlab="",ylab="",type="l",lwd=3)
       par(mai=op)
-  })
+})
   
-  output$o2_payoff_plot <- renderPlot({
+output$o2_payoff_plot <- renderPlot({
     the_payoff<-selected_payoff_2()
     o2_pay<-model_payoff(the_payoff)  
     op<-par()$mai
     par(mai=c(0,0,0,0))
     plot(o2_pay,axes=FALSE,xlab="",ylab="",type="l",lwd=3)
     par(mai=op)
-  })
-  
-  
-   
-  pnl <-reactive({
-    
-    input$backtest
-    o1_option<-isolate(selected_payoff_1())
-    o2_option<-isolate(selected_payoff_2())
-    w<-isolate(input$w_slider)
-    sl<-isolate(input$sl_slider)
-    
-    #
-    o1_results<-backtest_option(o1_option)
-    o2_results<-backtest_option(o2_option)
-    all_results<-c(o1_results,o2_results)
+})
 
-    if(length(all_results)<1)return(NULL)
-    
-    all_pnl<-rowSums(do.call(cbind,all_results))
-    
-    cum_max_pnl<-c(cummax(all_pnl[1:(w-1)]),roll_max(all_pnl,w))
-    drawdown<-cum_max_pnl-all_pnl
-    roll_drawdown<-c(0,mapply(max,split(drawdown,strategy_df$roll)))[strategy_df$roll-1]
-    
-    
-    stopped_pnl<-cumsum(c(0,diff(all_pnl))*(roll_drawdown<sl))
-    
-    strategy_pnl<-data.table( 
-      date=fastPOSIXct(strategy_df$date), 
-      pnl=stopped_pnl
-    )
-    
-    list(
-      strategy_pnl=strategy_pnl,
-      o1_option=o1_option,
-      o2_option=o2_option
-    )
-    
-  })
+output$o3_payoff_plot <- renderPlot({
+    the_payoff<-selected_payoff_3()
+    o3_pay<-model_payoff(the_payoff)  
+    op<-par()$mai
+    par(mai=c(0,0,0,0))
+    plot(o3_pay,axes=FALSE,xlab="",ylab="",type="l",lwd=3)
+    par(mai=op)
+})
   
-  output$summary<-renderText({
+output$o4_payoff_plot <- renderPlot({
+    the_payoff<-selected_payoff_4()
+    o4_pay<-model_payoff(the_payoff)  
+    op<-par()$mai
+    par(mai=c(0,0,0,0))
+    plot(o4_pay,axes=FALSE,xlab="",ylab="",type="l",lwd=3)
+    par(mai=op)
+})
+  
+
+output$payoff_plot <- renderPlot({
+    p<-mapply(model_payoff,list(
+      selected_payoff_1(),
+      selected_payoff_2(),
+      selected_payoff_3(),
+      selected_payoff_4()
+    ),SIMPLIFY = FALSE)
+    both_pay<-rowSums(do.call(cbind,p))
+    op<-par()$mai
+    par(mai=c(0,0,0,0))
+    plot(both_pay,axes=FALSE,xlab="",ylab="",type="l",lwd=3)
+    par(mai=op)
+})
+
+#
+#
+#
+
+pnl <-reactive({
+    input$backtest
+    make_backtest(
+      list(
+        isolate(selected_payoff_1()),
+        isolate(selected_payoff_2()),
+        isolate(selected_payoff_3()),
+        isolate(selected_payoff_4())
+      ),
+      sl=isolate(input$sl_slider),
+      w=isolate(input$w_slider)
+    )
+})
+
+#
+# main panel
+#
+
+output$summary<-renderText({
     strategy_pnl<-pnl()
     if(is.null(strategy_pnl))return(NULL)
     final_pnl<-tail(strategy_pnl$strategy_pnl$pnl,1)
@@ -574,24 +693,45 @@ server <- function(input, output, session) {
       "\n",
       sep="\n"
     )
-  })
+})
   
-  output$backtestPlot <- renderPlot({
+output$backtestPlot <- renderPlot({
      strategy_pnl<-pnl()
-     if(is.null(strategy_pnl))return(NULL)
-     x<-strategy_pnl$strategy_pnl[as.character(date,format="%Y-%m-%d") %in% as.character(dof$Date,format="%Y-%m-%d")]
-     g1<- x%>% ggplot() + 
-      geom_line(aes(x=date,y=pnl)) +
+     common_dates<-intersect(as.character(dof$Date),as.character(strategy_pnl$strategy_pnl$date))
+     if(input$plot_select=="idof"){
+      i<-which(as.character(strategy_pnl$strategy_pnl$date) %in% common_dates)
+     }
+     if(input$plot_select=="whole"){
+      i<-1:nrow(strategy_pnl$strategy_pnl)
+     }
+     g1<- strategy_pnl$strategy_pnl[i]%>% ggplot() + 
+      geom_line(aes(x=date,y=pnl)) + 
+      ggtitle("BACKTEST performance") +
       geom_vline(xintercept = strategy_pnl$strategy_pnl$date[which(strategy_df$days==1)],col="red",alpha=0.25) 
      
     plot(g1)
-   })
+    
+})
   
-  output$dofPlot <- renderPlot({
-    input$backtest
-    g1<- ggplot(data=dof) + geom_line(aes(x=Date,y=PnL))
+output$dofPlot <- renderPlot({
+    strategy_pnl<-pnl()
+    common_dates<-intersect(as.character(dof$Date),as.character(strategy_pnl$strategy_pnl$date))
+    if(input$plot_select=="idof"){
+      i<-which(as.character(dof$Date) %in% common_dates)
+    }
+     if(input$plot_select=="whole"){
+      i<-1:nrow(dof)
+    }
+    g1<- ggplot(data=dof[i]) + 
+      geom_line(aes(x=Date,y=PnL)) + 
+      ggtitle("IDOF performance") +
+      geom_vline(xintercept = strategy_pnl$strategy_pnl$date[which(strategy_df$days==1)],col="red",alpha=0.25) 
+    
     plot(g1)
-  })
+    
+})
+
+
 }
 
 # Run the application 

@@ -436,6 +436,7 @@ ui <- fluidPage(
         tags$hr(),
         tabsetPanel(
           tabPanel(title="Structure1",
+            fluidRow(checkboxInput("o1_enable", "Active", TRUE)),
             fluidRow(width=12,uiOutput("o1_strikes")),
             fluidRow(width=12,plotOutput("o1_payoff_plot",height="100px")),
             fluidRow(
@@ -445,6 +446,7 @@ ui <- fluidPage(
             )
           ),
           tabPanel(title="Structure2",
+            fluidRow(checkboxInput("o2_enable", "Active", TRUE)),
             fluidRow(width=12,uiOutput("o2_strikes")),
             fluidRow(width=12,plotOutput("o2_payoff_plot",height="100px")),
             fluidRow(
@@ -454,6 +456,7 @@ ui <- fluidPage(
             )
           ),
           tabPanel(title="Structure3",
+            fluidRow(checkboxInput("o3_enable", "Active", TRUE)),
             fluidRow(width=12,uiOutput("o3_strikes")),
             fluidRow(width=12,plotOutput("o3_payoff_plot",height="100px")),
             fluidRow(
@@ -463,6 +466,7 @@ ui <- fluidPage(
             )
           ),
           tabPanel(title="Structure4",
+            fluidRow(checkboxInput("o4_enable", "Active", TRUE)),
             fluidRow(width=12,uiOutput("o4_strikes")),
             fluidRow(width=12,plotOutput("o4_payoff_plot",height="100px")),
             fluidRow(
@@ -610,7 +614,7 @@ selected_payoff_4<-reactive({
 
 output$o1_payoff_plot <- renderPlot({
       the_payoff<-selected_payoff_1()
-      o1_pay<-model_payoff(the_payoff)  
+      o1_pay<-model_payoff(the_payoff)*input$o1_enable  
       op<-par()$mai
       par(mai=c(0,0,0,0))
       plot(o1_pay,axes=FALSE,xlab="",ylab="",type="l",lwd=3)
@@ -619,7 +623,7 @@ output$o1_payoff_plot <- renderPlot({
   
 output$o2_payoff_plot <- renderPlot({
     the_payoff<-selected_payoff_2()
-    o2_pay<-model_payoff(the_payoff)  
+    o2_pay<-model_payoff(the_payoff)*input$o2_enable   
     op<-par()$mai
     par(mai=c(0,0,0,0))
     plot(o2_pay,axes=FALSE,xlab="",ylab="",type="l",lwd=3)
@@ -628,7 +632,7 @@ output$o2_payoff_plot <- renderPlot({
 
 output$o3_payoff_plot <- renderPlot({
     the_payoff<-selected_payoff_3()
-    o3_pay<-model_payoff(the_payoff)  
+    o3_pay<-model_payoff(the_payoff)*input$o3_enable    
     op<-par()$mai
     par(mai=c(0,0,0,0))
     plot(o3_pay,axes=FALSE,xlab="",ylab="",type="l",lwd=3)
@@ -637,7 +641,7 @@ output$o3_payoff_plot <- renderPlot({
   
 output$o4_payoff_plot <- renderPlot({
     the_payoff<-selected_payoff_4()
-    o4_pay<-model_payoff(the_payoff)  
+    o4_pay<-model_payoff(the_payoff)*input$o4_enable    
     op<-par()$mai
     par(mai=c(0,0,0,0))
     plot(o4_pay,axes=FALSE,xlab="",ylab="",type="l",lwd=3)
@@ -646,12 +650,21 @@ output$o4_payoff_plot <- renderPlot({
   
 
 output$payoff_plot <- renderPlot({
-    p<-mapply(model_payoff,list(
-      selected_payoff_1(),
-      selected_payoff_2(),
-      selected_payoff_3(),
-      selected_payoff_4()
-    ),SIMPLIFY = FALSE)
+    f<-c(
+      input$o1_enable,
+      input$o2_enable,
+      input$o3_enable,
+      input$o4_enable
+    )
+    p<-mapply(model_payoff,
+      p=list(
+        selected_payoff_1(),
+        selected_payoff_2(),
+        selected_payoff_3(),
+        selected_payoff_4()
+      )[f],
+      SIMPLIFY = FALSE
+    )
     both_pay<-rowSums(do.call(cbind,p))
     op<-par()$mai
     par(mai=c(0,0,0,0))
@@ -665,16 +678,23 @@ output$payoff_plot <- renderPlot({
 
 pnl <-reactive({
     input$backtest
-    make_backtest(
+    f<-c(
+      input$o1_enable,
+      input$o2_enable,
+      input$o3_enable,
+      input$o4_enable
+    )
+    res<-make_backtest(
       list(
         isolate(selected_payoff_1()),
         isolate(selected_payoff_2()),
         isolate(selected_payoff_3()),
         isolate(selected_payoff_4())
-      ),
+      )[f],
       sl=isolate(input$sl_slider),
       w=isolate(input$w_slider)
     )
+    res
 })
 
 #
@@ -683,13 +703,18 @@ pnl <-reactive({
 
 output$summary<-renderText({
     strategy_pnl<-pnl()
-    if(is.null(strategy_pnl))return(NULL)
+    common_dates<-intersect(as.character(dof$Date),as.character(strategy_pnl$strategy_pnl$date))
+    i<-which(as.character(strategy_pnl$strategy_pnl$date) %in% common_dates)
+    a<-diff(strategy_pnl$strategy_pnl$pnl[i])
+    j<-which(as.character(dof$Date) %in% common_dates)
+    b<-diff(dof$PnL[j])
     final_pnl<-tail(strategy_pnl$strategy_pnl$pnl,1)
     max_draw<-max(cummax(strategy_pnl$strategy_pnl$pnl)-strategy_pnl$strategy_pnl$pnl)
     paste(
       paste0("P&L      : ",comma(final_pnl,digits=0)),
       paste0("Drawdown : ",comma(max_draw,digits=0)),
       paste0("Ratio    : ",round(final_pnl/max_draw,digits=2)),
+      paste0("Correl   : ",round(100*cor(a,b),digits=2)),
       "\n",
       sep="\n"
     )

@@ -277,10 +277,12 @@ dof$Date<-as.Date(dof$Date,format="%Y-%m-%d")
 dof$PnL<-cumsum(dof$PnL)
 
 strategy_df<-fread("strategy_df.csv")
+#spx_strategy_df<-fread("spx_strategy_df.csv")
+#ndx_strategy_df<-fread("ndx_strategy_df.csv")
 
 resampled_spx_vol<- "compressed_resampled_spx_vol.txt" %>% scan(character()) %>% decompress
 x<-resampled_spx_vol[Strike==3000]
-x$Strike<-9999
+ x$Strike<-9999
 resampled_spx_vol<-rbind(resampled_spx_vol,x)
 
 
@@ -401,7 +403,7 @@ make_backtest<-function(options,sl,w)
 ui <- fluidPage(
    
    # Application title
-   titlePanel("Rolling SPX option backtest"),
+   titlePanel("Option strategy backtest"),
    
    # Sidebar with a slider input for number of bins 
    sidebarLayout(
@@ -436,42 +438,54 @@ ui <- fluidPage(
         tags$hr(),
         tabsetPanel(
           tabPanel(title="Structure1",
-            fluidRow(checkboxInput("o1_enable", "Active", TRUE)),
-            fluidRow(width=12,uiOutput("o1_strikes")),
+            fluidRow(
+              column(width=6,selectInput("o1_market",label=NULL,choices=list("SPX"=1,"NDX"=2),selected=1)),
+              column(width=6,checkboxInput("o1_enable", "Active", TRUE))
+            ),
+            fluidRow(column(width=12,uiOutput("o1_strikes"))),
             fluidRow(width=12,plotOutput("o1_payoff_plot",height="100px")),
             fluidRow(
               column(width=3,selectInput("o1_type",label=NULL, choices=setNames(payoffs$select,payoffs$name),selected=1)),
-              column(width=3,selectInput("o1_direction", label = NULL, choices = list("Long" = 1, "Short" = 2),selected=4)),
+              column(width=3,selectInput("o1_direction", label = NULL, choices = list("Long" = 1, "Short" = 2),selected=1)),
               column(width=6,noUiSliderInput(inputId="o1_size", label=NULL, min=0, max=1, step=0.01,value=1))
             )
           ),
           tabPanel(title="Structure2",
-            fluidRow(checkboxInput("o2_enable", "Active", TRUE)),
+           fluidRow(
+              column(width=6,selectInput("o2_market",label=NULL,choices=list("SPX"=1,"NDX"=2),selected=1)),
+              column(width=6,checkboxInput("o2_enable", "Active", TRUE))
+            ),
             fluidRow(width=12,uiOutput("o2_strikes")),
             fluidRow(width=12,plotOutput("o2_payoff_plot",height="100px")),
             fluidRow(
               column(width=3,selectInput("o2_type", label = NULL, choices=setNames(payoffs$select,payoffs$name),selected=1)),
-              column(width=3,selectInput("o2_direction", label = NULL, choices = list("Long" = 1, "Short" = 2),selected=3)),
+              column(width=3,selectInput("o2_direction", label = NULL, choices = list("Long" = 1, "Short" = 2),selected=1)),
               column(width=6,noUiSliderInput(inputId="o2_size", label=NULL, min=0, max=1, step=0.01,value=1))
             )
           ),
           tabPanel(title="Structure3",
-            fluidRow(checkboxInput("o3_enable", "Active", TRUE)),
+            fluidRow(
+              column(width=6,selectInput("o3_market",label=NULL,choices=list("SPX"=1,"NDX"=2),selected=1)),
+              column(width=6,checkboxInput("o3_enable", "Active", TRUE))
+            ),
             fluidRow(width=12,uiOutput("o3_strikes")),
             fluidRow(width=12,plotOutput("o3_payoff_plot",height="100px")),
             fluidRow(
               column(width=3,selectInput("o3_type", label = NULL, choices=setNames(payoffs$select,payoffs$name),selected=1)),
-              column(width=3,selectInput("o3_direction", label = NULL, choices = list("Long" = 1, "Short" = 2),selected=3)),
+              column(width=3,selectInput("o3_direction", label = NULL, choices = list("Long" = 1, "Short" = 2),selected=1)),
               column(width=6,noUiSliderInput(inputId="o3_size", label=NULL, min=0, max=1, step=0.01,value=1))
             )
           ),
           tabPanel(title="Structure4",
-            fluidRow(checkboxInput("o4_enable", "Active", TRUE)),
+            fluidRow(
+              column(width=6,selectInput("o4_market",label=NULL,choices=list("SPX"=1,"NDX"=2),selected=1)),
+              column(width=6,checkboxInput("o4_enable", "Active", TRUE))
+            ),
             fluidRow(width=12,uiOutput("o4_strikes")),
             fluidRow(width=12,plotOutput("o4_payoff_plot",height="100px")),
             fluidRow(
               column(width=3,selectInput("o4_type", label = NULL, choices=setNames(payoffs$select,payoffs$name),selected=1)),
-              column(width=3,selectInput("o4_direction", label = NULL, choices = list("Long" = 1, "Short" = 2),selected=3)),
+              column(width=3,selectInput("o4_direction", label = NULL, choices = list("Long" = 1, "Short" = 2),selected=1)),
               column(width=6,noUiSliderInput(inputId="o4_size", label=NULL, min=0, max=1, step=0.01,value=1))
             )
           )
@@ -714,7 +728,7 @@ output$summary<-renderText({
       paste0("P&L      : ",comma(final_pnl,digits=0)),
       paste0("Drawdown : ",comma(max_draw,digits=0)),
       paste0("Ratio    : ",round(final_pnl/max_draw,digits=2)),
-      paste0("Correl   : ",round(100*cor(a,b),digits=2)),
+      paste0("Correl   : ",round(100*cor(roll_mean(a,14),roll_mean(b,14)),digits=2)),
       "\n",
       sep="\n"
     )

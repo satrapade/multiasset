@@ -217,7 +217,7 @@ make_option_pnl<-function(
 )
 {
   strikes<-strategy$roll_close*strike
-  vols<-interpolate_vol(date=strategy$date,strike=strikes,days=strategy_df$days,vsurf=vsurf)
+  vols<-interpolate_vol(date=strategy$date,strike=strikes,days=strategy$days,vsurf=vsurf)
   reval<-model(strategy$close, strikes, strategy$yfrac, 0,vols)
   cash_start<-ifelse(strategy$pday==strategy$start,-reval,0)
   cash_end<-ifelse(strategy$pday==strategy$end-1,reval,0)
@@ -238,33 +238,34 @@ make_option_pnl<-function(
 #
 #
 
-backtest_option<-function(option){
+backtest_option<-function(option,strategy=spx_strategy_df,vsurf=resampled_spx_vol){
   
   if(length(option$strike[[1]])<1)return(list(data.table(
     strike=0,
-    yfrac=strategy_df$yfrac,
-    vol=rep(0,nrow(strategy_df)),
-    close=strategy_df$close,
-    reval=rep(0,nrow(strategy_df)),
-    cash_start=rep(0,nrow(strategy_df)),
-    cash_end=rep(0,nrow(strategy_df)),
-    cash=rep(0,nrow(strategy_df)),
-    pnl=rep(0,nrow(strategy_df))
+    yfrac=strategy$yfrac,
+    vol=rep(0,nrow(strategy)),
+    close=strategy$close,
+    reval=rep(0,nrow(strategy)),
+    cash_start=rep(0,nrow(strategy)),
+    cash_end=rep(0,nrow(strategy)),
+    cash=rep(0,nrow(strategy)),
+    pnl=rep(0,nrow(strategy))
   )$pnl))
   
   option_results<-mapply(
-    function(model,strike,dir){
+    function(model,strike,dir,strategy,vsurf){
       make_option_pnl(
         model=model,
         strike=strike,
         dir=dir,
-        strategy=strategy_df,
-        vsurf=resampled_spx_vol
+        strategy=strategy,
+        vsurf=vsurf
       )$pnl
     },
     strike=option$strike[[1]],
     dir=option$size[[1]],
     model=option$model[[1]],
+    MoreArgs=list(strategy=strategy,vsurf=vsurf),
     SIMPLIFY=FALSE
   )
   
@@ -277,37 +278,12 @@ dof$Date<-as.Date(dof$Date,format="%Y-%m-%d")
 dof$PnL<-cumsum(dof$PnL)
 
 strategy_df<-fread("strategy_df.csv")
-#spx_strategy_df<-fread("spx_strategy_df.csv")
-#ndx_strategy_df<-fread("ndx_strategy_df.csv")
+
+spx_strategy_df<-fread("spx_strategy_df.csv")
+ndx_strategy_df<-fread("ndx_strategy_df.csv")
 
 resampled_spx_vol<- "compressed_resampled_spx_vol.txt" %>% scan(character()) %>% decompress
-x<-resampled_spx_vol[Strike==3000]
- x$Strike<-9999
-resampled_spx_vol<-rbind(resampled_spx_vol,x)
-
-
-
-
-option_strategies<-list(
-  None=0,                      
-  Call=1,
-  Put=2,
-  Stradle=3,
-  CallSpread=4,
-  PutSpread=5,
-  RiskReversal=6,
-  Butterfly=6
-)
-
-option_payoffs<-list(
-  None=function(spot,strikes)return(0),
-  Call=function(spot,strikes)max(spot-strikes[1],0),
-  Put=function(spot,strikes)max(strikes[1]-spot,0),
-  CallSpread=function(spot,strikes)max(spot-strikes[1],0)-max(spot-strikes[2]),
-  PutSpread=function(spot,strikes)max(strikes[1]-spot,0)-max(strikes[2]-spot,0),
-  RiskReversal=function(spot,strikes)max(spot-strikes[1],0)-max(strikes[2]-spot,0),
-  Butterfly=function(spot,strikes)max(spot-strikes[1],0)-2*max(spot-strikes[2],2)+max(strikes[3]-spot,0)
-)
+resampled_ndx_vol<- "compressed_resampled_ndx_vol.txt" %>% scan(character()) %>% decompress
 
 #
 # to be used by the app
@@ -345,6 +321,7 @@ payoffs<-rbind(
 payoff_1<-payoffs[1,]
 payoff_2<-payoffs[1,]
 payoff_3<-payoffs[1,]
+payoff_4<-payoffs[1,]
 
 model_payoff<-function(payoff){
   
@@ -370,9 +347,16 @@ model_payoff<-function(payoff){
   
 }
 
-make_backtest<-function(options,sl,w)
+make_backtest<-function(options,sl,w,strategy,vsurf)
 {
-    all_results<-mapply(function(o)do.call(cbind,backtest_option(o)),options,SIMPLIFY = FALSE)
+    all_results<-mapply(
+      function(o,strategy,vsurf){
+        do.call(cbind,backtest_option(option=o,strategy=strategy,vsurf=vsurf))
+      },
+      o=options,
+      MoreArgs = list(strategy=strategy,vsurf=vsurf),
+      SIMPLIFY = FALSE
+    )
   
     if(length(all_results)<1)return(NULL)
     
@@ -381,8 +365,8 @@ make_backtest<-function(options,sl,w)
     
     cum_max_pnl<-c(cummax(all_pnl[1:(w-1)]),roll_max(all_pnl,w))
     drawdown<-cum_max_pnl-all_pnl
-    drawdown_by_roll_period<-mapply(max,split(drawdown,strategy_df$roll))
-    roll_drawdown<-c(0,drawdown_by_roll_period)[strategy_df$roll]
+    drawdown_by_roll_period<-mapply(max,split(drawdown,strategy$roll))
+    roll_drawdown<-c(0,drawdown_by_roll_period)[strategy$roll]
     
     
     stopped_pnl<-cumsum(c(0,diff(all_pnl))*(roll_drawdown<sl))
@@ -397,6 +381,16 @@ make_backtest<-function(options,sl,w)
       options=options
     )
 }
+
+
+make_backtest(
+ options=list(payoffs[2,],payoffs[3,]),
+ sl=1000,
+ w=50,
+ strategy=spx_strategy_df,
+ vsurf=resampled_spx_vol
+)
+
 
     
 # Define UI for application that draws a histogram
@@ -419,15 +413,19 @@ ui <- fluidPage(
           ))
         ),
         fluidRow(
-          column(width=6, radioButtons("strike_select", "Strike selection",c(
+          column(width=4, radioButtons("strike_select", "Strike selection",c(
                  "As selected" = "asis",
                  "Zero cost on size of second structure" = "zero_size_2",
                  "Zero cost on stikes of second structure" = "zero_strike_2"
           ))),
-          column(width=6, radioButtons("plot_select", "Plot select",c(
+          column(width=4, radioButtons("plot_select", "Plot select",c(
                  "Whole period" = "whole",
                  "Live IDOF period" = "idof"
-          )))
+          ),selected = "idof")),
+          column(width=4, radioButtons("underlying_select", "Underlying",c(
+                 "SPX" = "spx",
+                 "NDX" = "ndx"
+          ),selected = "spx"))
         ),
         tags$hr(),
         fluidRow(
@@ -506,6 +504,25 @@ ui <- fluidPage(
 # Define server logic required to draw a histogram
 server <- function(input, output, session) {
   
+#
+# underlying
+#
+  
+resampled_grid<-reactive({
+  switch (input$underlying_select,
+    "spx" = resampled_spx_vol,
+    "ndx" = resampled_ndx_vol
+  )
+})
+  
+strategy<-reactive({
+  switch (input$underlying_select,
+    "spx" = spx_strategy_df,
+    "ndx" = ndx_strategy_df
+  )
+})
+
+
 #
 # strike sliders
 #
@@ -623,7 +640,7 @@ selected_payoff_4<-reactive({
 })
 
 #
-#
+# plot
 #
 
 output$o1_payoff_plot <- renderPlot({
@@ -664,12 +681,9 @@ output$o4_payoff_plot <- renderPlot({
   
 
 output$payoff_plot <- renderPlot({
-    f<-c(
-      input$o1_enable,
-      input$o2_enable,
-      input$o3_enable,
-      input$o4_enable
-    )
+  
+    f<-c( input$o1_enable, input$o2_enable, input$o3_enable, input$o4_enable )
+    
     p<-mapply(model_payoff,
       p=list(
         selected_payoff_1(),
@@ -680,24 +694,23 @@ output$payoff_plot <- renderPlot({
       SIMPLIFY = FALSE
     )
     both_pay<-rowSums(do.call(cbind,p))
+    
     op<-par()$mai
     par(mai=c(0,0,0,0))
     plot(both_pay,axes=FALSE,xlab="",ylab="",type="l",lwd=3)
     par(mai=op)
+    
 })
 
 #
-#
+# pnl calculation
 #
 
 pnl <-reactive({
+  
     input$backtest
-    f<-c(
-      input$o1_enable,
-      input$o2_enable,
-      input$o3_enable,
-      input$o4_enable
-    )
+    f<-c( input$o1_enable, input$o2_enable, input$o3_enable, input$o4_enable )
+    
     res<-make_backtest(
       list(
         isolate(selected_payoff_1()),
@@ -706,16 +719,24 @@ pnl <-reactive({
         isolate(selected_payoff_4())
       )[f],
       sl=isolate(input$sl_slider),
-      w=isolate(input$w_slider)
+      w=isolate(input$w_slider),
+      strategy=isolate(strategy()),
+      vsurf=isolate(resampled_grid())
     )
     res
+    
 })
 
 #
 # main panel
 #
+# summary
+# backtest plot
+# IDOF plot
+#
 
 output$summary<-renderText({
+  
     strategy_pnl<-pnl()
     common_dates<-intersect(as.character(dof$Date),as.character(strategy_pnl$strategy_pnl$date))
     i<-which(as.character(strategy_pnl$strategy_pnl$date) %in% common_dates)
@@ -732,35 +753,43 @@ output$summary<-renderText({
       "\n",
       sep="\n"
     )
+    
 })
   
 output$backtestPlot <- renderPlot({
+  
      strategy_pnl<-pnl()
      common_dates<-intersect(as.character(dof$Date),as.character(strategy_pnl$strategy_pnl$date))
+     
      if(input$plot_select=="idof"){
       i<-which(as.character(strategy_pnl$strategy_pnl$date) %in% common_dates)
      }
+     
      if(input$plot_select=="whole"){
       i<-1:nrow(strategy_pnl$strategy_pnl)
      }
+     
      g1<- strategy_pnl$strategy_pnl[i]%>% ggplot() + 
       geom_line(aes(x=date,y=pnl)) + 
       ggtitle("BACKTEST performance") +
       geom_vline(xintercept = strategy_pnl$strategy_pnl$date[which(strategy_df$days==1)],col="red",alpha=0.25) 
      
-    plot(g1)
+     plot(g1)
     
 })
   
 output$dofPlot <- renderPlot({
+  
     strategy_pnl<-pnl()
     common_dates<-intersect(as.character(dof$Date),as.character(strategy_pnl$strategy_pnl$date))
+    
     if(input$plot_select=="idof"){
       i<-which(as.character(dof$Date) %in% common_dates)
     }
      if(input$plot_select=="whole"){
       i<-1:nrow(dof)
-    }
+     }
+    
     g1<- ggplot(data=dof[i]) + 
       geom_line(aes(x=Date,y=PnL)) + 
       ggtitle("IDOF performance") +

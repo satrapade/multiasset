@@ -1,4 +1,3 @@
-
 #
 # This is a Shiny web application. You can run the application by clicking
 # the 'Run App' button above.
@@ -282,9 +281,13 @@ strategy_df<-fread("strategy_df.csv")
 
 spx_strategy_df<-fread("spx_strategy_df.csv")
 ndx_strategy_df<-fread("ndx_strategy_df.csv")
+dax_strategy_df<-fread("dax_strategy_df.csv")
+sx5e_strategy_df<-fread("dax_strategy_df.csv")
 
-resampled_spx_vol<- "compressed_resampled_spx_vol.txt" %>% scan(character()) %>% decompress
-resampled_ndx_vol<- "compressed_resampled_ndx_vol.txt" %>% scan(character()) %>% decompress
+resampled_spx_vol<-"compressed_resampled_spx_vol.txt" %>% scan(character()) %>% decompress
+resampled_ndx_vol<-"compressed_resampled_ndx_vol.txt" %>% scan(character()) %>% decompress
+resampled_dax_vol<-"compressed_resampled_dax_vol.txt" %>% scan(character()) %>% decompress
+resampled_sx5e_vol<-"compressed_resampled_sx5e_vol.txt" %>% scan(character()) %>% decompress
 
 #
 # to be used by the app
@@ -384,7 +387,7 @@ make_backtest<-function(options,sl,w,strategy,vsurf)
 }
 
 
-make_backtest(
+x<-make_backtest(
  options=list(payoffs[2,],payoffs[3,]),
  sl=1000,
  w=50,
@@ -423,10 +426,15 @@ ui <- fluidPage(
                  "Whole period" = "whole",
                  "Live IDOF period" = "idof"
           ),selected = "idof")),
-          column(width=4, radioButtons("underlying_select", "Underlying",c(
-                 "SPX" = "spx",
-                 "NDX" = "ndx"
-          ),selected = "spx"))
+          column(
+            width=4, 
+            checkboxGroupInput(
+              "underlying_select", 
+              label = h3("Underlyings"), 
+              choices = list("SPX"=1, "NDX"=2, "DAX"=3,"SX5E"=4),
+              selected = 1
+            )
+          )
         ),
         tags$hr(),
         fluidRow(
@@ -438,7 +446,6 @@ ui <- fluidPage(
         tabsetPanel(
           tabPanel(title="Structure1",
             fluidRow(
-              column(width=6,selectInput("o1_market",label=NULL,choices=list("SPX"=1,"NDX"=2),selected=1)),
               column(width=6,checkboxInput("o1_enable", "Active", TRUE))
             ),
             fluidRow(column(width=12,uiOutput("o1_strikes"))),
@@ -451,7 +458,6 @@ ui <- fluidPage(
           ),
           tabPanel(title="Structure2",
            fluidRow(
-              column(width=6,selectInput("o2_market",label=NULL,choices=list("SPX"=1,"NDX"=2),selected=1)),
               column(width=6,checkboxInput("o2_enable", "Active", TRUE))
             ),
             fluidRow(width=12,uiOutput("o2_strikes")),
@@ -464,7 +470,6 @@ ui <- fluidPage(
           ),
           tabPanel(title="Structure3",
             fluidRow(
-              column(width=6,selectInput("o3_market",label=NULL,choices=list("SPX"=1,"NDX"=2),selected=1)),
               column(width=6,checkboxInput("o3_enable", "Active", TRUE))
             ),
             fluidRow(width=12,uiOutput("o3_strikes")),
@@ -477,7 +482,6 @@ ui <- fluidPage(
           ),
           tabPanel(title="Structure4",
             fluidRow(
-              column(width=6,selectInput("o4_market",label=NULL,choices=list("SPX"=1,"NDX"=2),selected=1)),
               column(width=6,checkboxInput("o4_enable", "Active", TRUE))
             ),
             fluidRow(width=12,uiOutput("o4_strikes")),
@@ -505,24 +509,6 @@ ui <- fluidPage(
 # Define server logic required to draw a histogram
 server <- function(input, output, session) {
   
-#
-# underlying
-#
-  
-resampled_grid<-reactive({
-  switch (input$underlying_select,
-    "spx" = resampled_spx_vol,
-    "ndx" = resampled_ndx_vol
-  )
-})
-  
-strategy<-reactive({
-  switch (input$underlying_select,
-    "spx" = spx_strategy_df,
-    "ndx" = ndx_strategy_df
-  )
-})
-
 
 #
 # strike sliders
@@ -711,20 +697,45 @@ pnl <-reactive({
   
     input$backtest
     f<-c( input$o1_enable, input$o2_enable, input$o3_enable, input$o4_enable )
-    
-    res<-make_backtest(
-      list(
+    p<-list(
         isolate(selected_payoff_1()),
         isolate(selected_payoff_2()),
         isolate(selected_payoff_3()),
         isolate(selected_payoff_4())
-      )[f],
-      sl=isolate(input$sl_slider),
-      w=isolate(input$w_slider),
-      strategy=isolate(strategy()),
-      vsurf=isolate(resampled_grid())
+    )[f]
+    u<-as.integer(input$underlying_select)
+    sl<-isolate(input$sl_slider)
+    w<-isolate(input$w_slider)
+    spx_res<-make_backtest(p,sl=sl,w=w,strategy=spx_strategy_df,vsurf=resampled_spx_vol)$strategy_pnl
+    ndx_res<-make_backtest(p,sl=sl,w=w,strategy=ndx_strategy_df,vsurf=resampled_ndx_vol)$strategy_pnl
+    dax_res<-make_backtest(p,sl=sl,w=w,strategy=dax_strategy_df,vsurf=resampled_dax_vol)$strategy_pnl
+    sx5e_res<-make_backtest(p,sl=sl,w=w,strategy=sx5e_strategy_df,vsurf=resampled_sx5e_vol)$strategy_pnl
+    common_dates<-Reduce(intersect,list(
+      as.character(spx_res$date),
+      as.character(ndx_res$date),
+      as.character(dax_res$date),
+      as.character(sx5e_res$date)
+    ))
+    common_pnl<-cbind(
+      spx_res[as.character(date) %in% common_dates,pnl],
+      ndx_res[as.character(date) %in% common_dates,pnl],
+      dax_res[as.character(date) %in% common_dates,pnl],
+      sx5e_res[as.character(date) %in% common_dates,pnl]
     )
-    res
+    ptf<-cbind(as.numeric(c(1,2,3,4) %in% u))
+    
+    reval_date<-as.Date(common_dates,format="%Y-%m-%d")
+    maturity<-spx_strategy_df[date_string %in% common_dates,days]
+    ptf_pnl<-drop(common_pnl %*% ptf)
+    
+    list(
+      strategy_pnl=data.table(
+        date=reval_date,
+        pnl=ptf_pnl,
+        day=maturity
+      )
+    )
+    
     
 })
 
@@ -770,10 +781,12 @@ output$backtestPlot <- renderPlot({
       i<-1:nrow(strategy_pnl$strategy_pnl)
      }
      
+     roll_dates<-strategy_pnl$strategy_pnl[day==1,date]
+     
      g1<- strategy_pnl$strategy_pnl[i]%>% ggplot() + 
       geom_line(aes(x=date,y=pnl)) + 
       ggtitle("BACKTEST performance") +
-      geom_vline(xintercept = strategy_pnl$strategy_pnl$date[which(strategy_df$days==1)],col="red",alpha=0.25) 
+      geom_vline(xintercept = roll_dates,col="red",alpha=0.25) 
      
      plot(g1)
     
@@ -805,4 +818,5 @@ output$dofPlot <- renderPlot({
 
 # Run the application 
 shinyApp(ui = ui, server = server)
+
 

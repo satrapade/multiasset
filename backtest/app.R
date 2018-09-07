@@ -714,7 +714,7 @@ output$summary<-renderText({
       paste0("P&L      : ",comma(final_pnl,digits=0)),
       paste0("Drawdown : ",comma(max_draw,digits=0)),
       paste0("Ratio    : ",round(final_pnl/max_draw,digits=2)),
-      paste0("Correl   : ",round(100*cor(a,b),digits=2)),
+      paste0("Correl   : ",round(100*cor(roll_sum(a,7),roll_sum(b,7)),digits=2)),
       "\n",
       sep="\n"
     )

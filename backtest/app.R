@@ -372,18 +372,14 @@ make_backtest<-function(options,sl,w,strategy,vsurf)
     drawdown_by_roll_period<-mapply(max,split(drawdown,strategy$roll))
     roll_drawdown<-c(0,drawdown_by_roll_period)[strategy$roll]
     
-    
     stopped_pnl<-cumsum(c(0,diff(all_pnl))*(roll_drawdown<sl))
     
     strategy_pnl<-data.table( 
-      date=as.Date(strategy_df$date,format="%Y-%m-%d"), 
+      date=as.Date(strategy$date,format="%Y-%m-%d"), 
       pnl=stopped_pnl
     )
     
-    list(
-      strategy_pnl=strategy_pnl,
-      options=options
-    )
+    strategy_pnl
 }
 
 
@@ -706,16 +702,19 @@ pnl <-reactive({
     u<-as.integer(input$underlying_select)
     sl<-isolate(input$sl_slider)
     w<-isolate(input$w_slider)
-    spx_res<-make_backtest(p,sl=sl,w=w,strategy=spx_strategy_df,vsurf=resampled_spx_vol)$strategy_pnl
-    ndx_res<-make_backtest(p,sl=sl,w=w,strategy=ndx_strategy_df,vsurf=resampled_ndx_vol)$strategy_pnl
-    dax_res<-make_backtest(p,sl=sl,w=w,strategy=dax_strategy_df,vsurf=resampled_dax_vol)$strategy_pnl
-    sx5e_res<-make_backtest(p,sl=sl,w=w,strategy=sx5e_strategy_df,vsurf=resampled_sx5e_vol)$strategy_pnl
+    
+    spx_res<-make_backtest(p,sl=sl,w=w,strategy=spx_strategy_df,vsurf=resampled_spx_vol)
+    ndx_res<-make_backtest(p,sl=sl,w=w,strategy=ndx_strategy_df,vsurf=resampled_ndx_vol)
+    dax_res<-make_backtest(p,sl=sl,w=w,strategy=dax_strategy_df,vsurf=resampled_dax_vol)
+    sx5e_res<-make_backtest(p,sl=sl,w=w,strategy=sx5e_strategy_df,vsurf=resampled_sx5e_vol)
+    
     common_dates<-Reduce(intersect,list(
       as.character(spx_res$date),
       as.character(ndx_res$date),
       as.character(dax_res$date),
       as.character(sx5e_res$date)
     ))
+    
     common_pnl<-cbind(
       spx_res[as.character(date) %in% common_dates,pnl],
       ndx_res[as.character(date) %in% common_dates,pnl],
@@ -728,12 +727,10 @@ pnl <-reactive({
     maturity<-spx_strategy_df[date_string %in% common_dates,days]
     ptf_pnl<-drop(common_pnl %*% ptf)
     
-    list(
-      strategy_pnl=data.table(
-        date=reval_date,
-        pnl=ptf_pnl,
-        day=maturity
-      )
+    data.table(
+      date=reval_date,
+      pnl=ptf_pnl,
+      day=maturity
     )
     
     
@@ -750,13 +747,13 @@ pnl <-reactive({
 output$summary<-renderText({
   
     strategy_pnl<-pnl()
-    common_dates<-intersect(as.character(dof$Date),as.character(strategy_pnl$strategy_pnl$date))
-    i<-which(as.character(strategy_pnl$strategy_pnl$date) %in% common_dates)
-    a<-diff(strategy_pnl$strategy_pnl$pnl[i])
+    common_dates<-intersect(as.character(dof$Date),as.character(strategy_pnl$date))
+    i<-which(as.character(strategy_pnl$date) %in% common_dates)
+    a<-diff(strategy_pnl$pnl[i])
     j<-which(as.character(dof$Date) %in% common_dates)
     b<-diff(dof$PnL[j])
-    final_pnl<-tail(strategy_pnl$strategy_pnl$pnl,1)
-    max_draw<-max(cummax(strategy_pnl$strategy_pnl$pnl)-strategy_pnl$strategy_pnl$pnl)
+    final_pnl<-tail(strategy_pnl$pnl,1)
+    max_draw<-max(cummax(strategy_pnl$pnl)-strategy_pnl$pnl)
     paste(
       paste0("P&L      : ",comma(final_pnl,digits=0)),
       paste0("Drawdown : ",comma(max_draw,digits=0)),
@@ -771,19 +768,19 @@ output$summary<-renderText({
 output$backtestPlot <- renderPlot({
   
      strategy_pnl<-pnl()
-     common_dates<-intersect(as.character(dof$Date),as.character(strategy_pnl$strategy_pnl$date))
+     common_dates<-intersect(as.character(dof$Date),as.character(strategy_pnl$date))
      
      if(input$plot_select=="idof"){
-      i<-which(as.character(strategy_pnl$strategy_pnl$date) %in% common_dates)
+      i<-which(as.character(strategy_pnl$date) %in% common_dates)
      }
      
      if(input$plot_select=="whole"){
-      i<-1:nrow(strategy_pnl$strategy_pnl)
+      i<-1:nrow(strategy_pnl)
      }
      
-     roll_dates<-strategy_pnl$strategy_pnl[day==1,date]
+     roll_dates<-strategy_pnl[day==1,date]
      
-     g1<- strategy_pnl$strategy_pnl[i]%>% ggplot() + 
+     g1<- strategy_pnl[i]%>% ggplot() + 
       geom_line(aes(x=date,y=pnl)) + 
       ggtitle("BACKTEST performance") +
       geom_vline(xintercept = roll_dates,col="red",alpha=0.25) 
@@ -795,7 +792,7 @@ output$backtestPlot <- renderPlot({
 output$dofPlot <- renderPlot({
   
     strategy_pnl<-pnl()
-    common_dates<-intersect(as.character(dof$Date),as.character(strategy_pnl$strategy_pnl$date))
+    common_dates<-intersect(as.character(dof$Date),as.character(strategy_pnl$date))
     
     if(input$plot_select=="idof"){
       i<-which(as.character(dof$Date) %in% common_dates)
@@ -807,7 +804,7 @@ output$dofPlot <- renderPlot({
     g1<- ggplot(data=dof[i]) + 
       geom_line(aes(x=Date,y=PnL)) + 
       ggtitle("IDOF performance") +
-      geom_vline(xintercept = strategy_pnl$strategy_pnl$date[which(strategy_df$days==1)],col="red",alpha=0.25) 
+      geom_vline(xintercept = strategy_pnl$date[which(strategy_pnl$day==1)],col="red",alpha=0.25) 
     
     plot(g1)
     

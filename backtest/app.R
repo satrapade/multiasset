@@ -351,6 +351,26 @@ model_payoff<-function(payoff){
   
 }
 
+apply_stop<-function(px,stop_level,rolls=floor(seq(1,length(px),length.out = 10)))data.table(
+  tret=c(0,diff(px)),
+  px=px
+)[,
+  c(.SD,list(
+    start_px=rep(px[rolls],times=c(diff(rolls),1)),
+    roll=rep(rolls,times=c(diff(rolls),1))
+  ))
+][,
+  c(.SD,list(dd=px-start_px))
+][,
+  c(.SD,list(sl=c(0,head(cummax(dd<(-stop_level)),-1)))),
+  keyby=roll
+][,
+  c(.SD,list(stopped_tret=ifelse(sl>0,0,tret)))
+][,
+  c(.SD,list(stopped_px=cumsum(stopped_tret)))
+]
+
+    
 make_backtest<-function(options,sl,w,strategy,vsurf)
 {
     all_results<-mapply(
@@ -367,12 +387,8 @@ make_backtest<-function(options,sl,w,strategy,vsurf)
     result_matrix<-do.call(cbind,all_results)
     all_pnl<-rowSums(result_matrix)
     
-    cum_max_pnl<-c(cummax(all_pnl[1:(w-1)]),roll_max(all_pnl,w))
-    drawdown<-cum_max_pnl-all_pnl
-    drawdown_by_roll_period<-mapply(max,split(drawdown,strategy$roll))
-    roll_drawdown<-c(0,drawdown_by_roll_period)[strategy$roll]
-    
-    stopped_pnl<-cumsum(c(0,diff(all_pnl))*(roll_drawdown<sl))
+    a<-apply_stop(px=all_pnl,stop_level=sl,rolls=which(strategy$pday==strategy$start))
+    stopped_pnl<-a$stopped_px
     
     strategy_pnl<-data.table( 
       date=as.Date(strategy$date,format="%Y-%m-%d"), 

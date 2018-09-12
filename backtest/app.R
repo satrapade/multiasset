@@ -408,7 +408,38 @@ x<-make_backtest(
 )
 
 underlyings<-c("SPX", "NDX", "DAX","SX5E")
-    
+
+
+make_outcome<-function(strategy,backtest){
+  outcome<-strategy[
+    start==pday,
+    .(
+        roll=roll,
+        date=date_string,
+        wday=wday,
+        mday=mday,
+        month=month,
+        close=close,
+        start=start,
+        end=end,
+        days=days,
+        yfrac=yfrac,
+        pnl=mapply(
+            function(s,e)100*(backtest$pnl[e]-backtest$pnl[s]),
+            s=start,
+            e=end
+        ),
+        dd=mapply(
+            function(s,e)round(100*(max(cummax(backtest$pnl[s:e])-backtest$pnl[s:e])),digits=2),
+            s=start,
+            e=end
+        )
+    )
+  ]
+  outcome
+}
+
+
 # Define UI for application that draws a histogram
 ui <- fluidPage(
    
@@ -875,126 +906,10 @@ output$dofPlot <- renderPlot({
 #
 #
 
-spx_outcome<-reactive({
-  backtest<-spx_pnl()
-  outcome<-spx_strategy_df[
-    start==pday,
-    .(
-        roll=roll,
-        date=date_string,
-        wday=wday,
-        mday=mday,
-        month=month,
-        close=close,
-        start=start,
-        end=end,
-        days=days,
-        yfrac=yfrac,
-        pnl=mapply(
-            function(s,e)100*(backtest$pnl[e]-backtest$pnl[s]),
-            s=start,
-            e=end
-        ),
-        dd=mapply(
-            function(s,e)round(100*(max(cummax(backtest$pnl[s:e])-backtest$pnl[s:e])),digits=2),
-            s=start,
-            e=end
-        )
-    )
-  ]
-  outcome
-})
-
-ndx_outcome<-reactive({
-  backtest<-ndx_pnl()
-  outcome<-ndx_strategy_df[
-    start==pday,
-    .(
-        roll=roll,
-        date=date_string,
-        wday=wday,
-        mday=mday,
-        month=month,
-        close=close,
-        start=start,
-        end=end,
-        days=days,
-        yfrac=yfrac,
-        pnl=mapply(
-            function(s,e)100*(backtest$pnl[e]-backtest$pnl[s]),
-            s=start,
-            e=end
-        ),
-        dd=mapply(
-            function(s,e)round(100*(max(cummax(backtest$pnl[s:e])-backtest$pnl[s:e])),digits=2),
-            s=start,
-            e=end
-        )
-    )
-  ]
-  outcome
-})
-
-dax_outcome<-reactive({
-  backtest<-dax_pnl()
-  outcome<-dax_strategy_df[
-    start==pday,
-    .(
-        roll=roll,
-        date=date_string,
-        wday=wday,
-        mday=mday,
-        month=month,
-        close=close,
-        start=start,
-        end=end,
-        days=days,
-        yfrac=yfrac,
-        pnl=mapply(
-            function(s,e)100*(backtest$pnl[e]-backtest$pnl[s]),
-            s=start,
-            e=end
-        ),
-        dd=mapply(
-            function(s,e)round(100*(max(cummax(backtest$pnl[s:e])-backtest$pnl[s:e])),digits=2),
-            s=start,
-            e=end
-        )
-    )
-  ]
-  outcome
-})
-
-sx5e_outcome<-reactive({
-  backtest<-sx5e_pnl()
-  outcome<-sx5e_strategy_df[
-    start==pday,
-    .(
-        roll=roll,
-        date=date_string,
-        wday=wday,
-        mday=mday,
-        month=month,
-        close=close,
-        start=start,
-        end=end,
-        days=days,
-        yfrac=yfrac,
-        pnl=mapply(
-            function(s,e)100*(backtest$pnl[e]-backtest$pnl[s]),
-            s=start,
-            e=end
-        ),
-        dd=mapply(
-            function(s,e)round(100*(max(cummax(backtest$pnl[s:e])-backtest$pnl[s:e])),digits=2),
-            s=start,
-            e=end
-        )
-    )
-  ]
-  outcome
-})
-
+spx_outcome  <- reactive({ make_outcome(spx_strategy_df,spx_pnl())   })
+ndx_outcome  <- reactive({ make_outcome(ndx_strategy_df,ndx_pnl())   })
+dax_outcome  <- reactive({ make_outcome(dax_strategy_df,dax_pnl())   })
+sx5e_outcome <- reactive({ make_outcome(sx5e_strategy_df,sx5e_pnl()) })
 
 output$strategy_outcomes<-DT::renderDataTable({
       strategy_name<-input$roll_underlying_select

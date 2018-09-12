@@ -686,6 +686,12 @@ selected_payoff_4<-reactive({
    app_env$payoff_4
 })
 
+selected_structures<-reactive({
+    f<-c( input$o1_enable, input$o2_enable, input$o3_enable, input$o4_enable )
+    p<-list(selected_payoff_1(), selected_payoff_2(), selected_payoff_3(), selected_payoff_4() )[f]
+    p  
+})
+
 #
 # plot
 #
@@ -729,17 +735,11 @@ output$o4_payoff_plot <- renderPlot({
 
 output$payoff_plot <- renderPlot({
   
-    f<-c( input$o1_enable, input$o2_enable, input$o3_enable, input$o4_enable )
-    
     p<-mapply(model_payoff,
-      p=list(
-        selected_payoff_1(),
-        selected_payoff_2(),
-        selected_payoff_3(),
-        selected_payoff_4()
-      )[f],
+      p=selected_structures(),
       SIMPLIFY = FALSE
     )
+    
     both_pay<-rowSums(do.call(cbind,p))
     
     op<-par()$mai
@@ -753,11 +753,7 @@ output$payoff_plot <- renderPlot({
 # pnl calculation
 #
 
-selected_structures<-reactive({
-    f<-c( input$o1_enable, input$o2_enable, input$o3_enable, input$o4_enable )
-    p<-list(selected_payoff_1(), selected_payoff_2(), selected_payoff_3(), selected_payoff_4() )[f]
-    p  
-})
+
 
 spx_pnl<-reactive({
     input$backtest

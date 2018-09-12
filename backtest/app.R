@@ -23,6 +23,7 @@ require(Matrix)
 require(akima)
 require(ggplot2)
 require(shinyWidgets)
+require(DT)
 
 source("https://raw.githubusercontent.com/satrapade/utility/master/utility_functions.R")
 source("https://raw.githubusercontent.com/satrapade/pairs/master/utility/query.R")
@@ -218,7 +219,7 @@ make_option_pnl<-function(
 {
   strikes<-strategy$roll_close*strike
   vols<-interpolate_vol(date=strategy$date,strike=strikes,days=strategy$days,vsurf=vsurf)
-  reval<-model(strategy$close, strikes, strategy$yfrac, 0,vols)
+  reval<-model(strategy$close, strikes, strategy$yfrac, 0,vols)/strategy$roll_close
   cash_start<-ifelse(strategy$pday==strategy$start,-reval,0)
   cash_end<-ifelse(strategy$pday==strategy$end-1,reval,0)
   data.table(
@@ -356,8 +357,8 @@ apply_stop<-function(px,stop_level,rolls=floor(seq(1,length(px),length.out = 10)
   px=px
 )[,
   c(.SD,list(
-    start_px=rep(px[rolls],times=c(diff(rolls),1)),
-    roll=rep(rolls,times=c(diff(rolls),1))
+    start_px=rep(px[rolls],times=c(diff(rolls),length(px)-tail(rolls,1)+1)),
+    roll=rep(rolls,times=c(diff(rolls),length(px)-tail(rolls,1)+1))
   ))
 ][,
   c(.SD,list(dd=px-start_px))
@@ -407,7 +408,7 @@ x<-make_backtest(
  vsurf=resampled_spx_vol
 )
 
-
+underlyings<-c("SPX", "NDX", "DAX","SX5E")
     
 # Define UI for application that draws a histogram
 ui <- fluidPage(
@@ -422,7 +423,7 @@ ui <- fluidPage(
         tags$hr(),
         fluidRow(
           column(width=6,noUiSliderInput(
-            inputId="sl_slider", label="Training stopLoss (points)", min=0, max=2000, step=10, value=2000
+            inputId="sl_slider", label="Training stopLoss (pct of roll close)", min=0, max=100, step=1, value=99
           )),
           column(width=6,noUiSliderInput(
             inputId="w_slider", label="Window (days)", min=0, max=300, step=10, value=300
@@ -440,11 +441,13 @@ ui <- fluidPage(
           ),selected = "idof")),
           column(
             width=4, 
-            checkboxGroupInput(
-              "underlying_select", 
-              label = h3("Underlyings"), 
-              choices = list("SPX"=1, "NDX"=2, "DAX"=3,"SX5E"=4),
-              selected = 1
+            selectizeInput(
+              inputId = "underlying_select", 
+              "Underlyings", 
+              choices=underlyings, 
+              selected = "SPX", 
+              multiple = TRUE,
+               options = NULL
             )
           )
         ),
@@ -510,9 +513,27 @@ ui <- fluidPage(
       ),
     # Show a plot of the generated distribution
       mainPanel(
-        verbatimTextOutput("summary"),
-        plotOutput("backtestPlot"),
-        plotOutput("dofPlot")
+         tabsetPanel(
+            tabPanel(title="Stats",
+              verbatimTextOutput("summary")
+            ),
+            tabPanel(title="Plots",
+              plotOutput("backtestPlot"),
+              plotOutput("dofPlot")
+            ),
+            tabPanel(title="RollDates",
+              fluidRow(
+                column(width=6,selectizeInput(
+                  inputId = "roll_underlying_select", 
+                  "Underlying", 
+                  choices=underlyings, 
+                  selected = "SPX", 
+                  multiple = FALSE,
+                  options = NULL
+              ))),
+              fluidRow(column(width=12,DT::dataTableOutput("spx_strategy")))
+            )
+        )
       )
   )
 )
@@ -521,7 +542,47 @@ ui <- fluidPage(
 # Define server logic required to draw a histogram
 server <- function(input, output, session) {
   
+#
+#
+#
 
+  output$spx_strategy<-DT::renderDataTable({
+      strategy_name<-input$roll_underlying_select
+      if(length(strategy_name)<1)return(NULL)
+      strategy<-switch(
+        strategy_name,
+        SPX=spx_strategy_df,
+        NDX=ndx_strategy_df,
+        DAX=dax_strategy_df,
+        SX5E=sx5e_strategy_df
+      )
+      the_table<-DT::datatable(
+        strategy[start==pday,.(
+          date=date_string,
+          close=close,
+          wday=wday,
+          month=month,
+          roll=roll,
+          roll_close=roll_close,
+          start=start,
+          end=end,
+          days=days,
+          yfrac=yfrac
+        )], 
+        selection="single",
+        options = list(
+          bPaginate = F, 
+          scrollY="700px",
+          searching = FALSE
+        )
+      ) %>%
+      formatRound("close",1) %>%
+      formatRound("roll_close",1) %>%
+      formatRound("yfrac",3)
+      
+      the_table
+  })
+  
 #
 # strike sliders
 #
@@ -715,7 +776,7 @@ pnl <-reactive({
         isolate(selected_payoff_3()),
         isolate(selected_payoff_4())
     )[f]
-    u<-as.integer(input$underlying_select)
+    u<-isolate(input$underlying_select)
     sl<-isolate(input$sl_slider)
     w<-isolate(input$w_slider)
     
@@ -737,7 +798,7 @@ pnl <-reactive({
       dax_res[as.character(date) %in% common_dates,pnl],
       sx5e_res[as.character(date) %in% common_dates,pnl]
     )
-    ptf<-cbind(as.numeric(c(1,2,3,4) %in% u))
+    ptf<-cbind(underlyings %in% u)/max(length(u),1)
     
     reval_date<-as.Date(common_dates,format="%Y-%m-%d")
     maturity<-spx_strategy_df[date_string %in% common_dates,days]

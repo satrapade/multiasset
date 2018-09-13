@@ -374,6 +374,10 @@ apply_stop<-function(px,stop_level,rolls=floor(seq(1,length(px),length.out = 10)
     
 make_backtest<-function(options,sl,strategy,vsurf)
 {
+    if(length(options)<1)return(data.table(
+        date=as.Date(strategy$date,format="%Y-%m-%d"), 
+        pnl=0
+    ))
     all_results<-mapply(
       function(o,strategy,vsurf){
         do.call(cbind,backtest_option(option=o,strategy=strategy,vsurf=vsurf))
@@ -466,8 +470,7 @@ ui <- fluidPage(
                  "Whole period" = "whole",
                  "Live IDOF period" = "idof"
           ),selected = "idof")),
-          column(
-            width=4, 
+          column(width=4,verticalLayout(
             selectizeInput(
               inputId = "underlying_select", 
               "Underlyings", 
@@ -475,8 +478,16 @@ ui <- fluidPage(
               selected = "SPX", 
               multiple = TRUE,
                options = NULL
+            ),
+            selectizeInput(
+              inputId = "structure_select", 
+              "Structures", 
+              choices=c("Structure1","Structure2","Structure3","Structure4"), 
+              selected = "Structure1", 
+              multiple = TRUE,
+               options = NULL
             )
-          )
+          ))
         ),
         tags$hr(),
         fluidRow(
@@ -487,9 +498,6 @@ ui <- fluidPage(
         tags$hr(),
         tabsetPanel(
           tabPanel(title="Structure1",
-            fluidRow(
-              column(width=6,checkboxInput("o1_enable", "Active", TRUE))
-            ),
             fluidRow(column(width=12,uiOutput("o1_strikes"))),
             fluidRow(width=12,plotOutput("o1_payoff_plot",height="100px")),
             fluidRow(
@@ -499,9 +507,6 @@ ui <- fluidPage(
             )
           ),
           tabPanel(title="Structure2",
-           fluidRow(
-              column(width=6,checkboxInput("o2_enable", "Active", TRUE))
-            ),
             fluidRow(width=12,uiOutput("o2_strikes")),
             fluidRow(width=12,plotOutput("o2_payoff_plot",height="100px")),
             fluidRow(
@@ -511,9 +516,6 @@ ui <- fluidPage(
             )
           ),
           tabPanel(title="Structure3",
-            fluidRow(
-              column(width=6,checkboxInput("o3_enable", "Active", TRUE))
-            ),
             fluidRow(width=12,uiOutput("o3_strikes")),
             fluidRow(width=12,plotOutput("o3_payoff_plot",height="100px")),
             fluidRow(
@@ -523,9 +525,6 @@ ui <- fluidPage(
             )
           ),
           tabPanel(title="Structure4",
-            fluidRow(
-              column(width=6,checkboxInput("o4_enable", "Active", TRUE))
-            ),
             fluidRow(width=12,uiOutput("o4_strikes")),
             fluidRow(width=12,plotOutput("o4_payoff_plot",height="100px")),
             fluidRow(
@@ -565,6 +564,13 @@ ui <- fluidPage(
   )
 )
 
+
+make_payoff_plot<-function(p){
+  op<-par()$mai
+  par(mai=c(0,0,0,0))
+  plot(model_payoff(p),axes=FALSE,xlab="",ylab="",type="l",lwd=3)
+  par(mai=op)
+}
 
 # Define server logic required to draw a histogram
 server <- function(input, output, session) {
@@ -687,7 +693,7 @@ selected_payoff_4<-reactive({
 })
 
 selected_structures<-reactive({
-    f<-c( input$o1_enable, input$o2_enable, input$o3_enable, input$o4_enable )
+    f<-c("Structure1","Structure2","Structure3","Structure4") %in% input$structure_select
     p<-list(selected_payoff_1(), selected_payoff_2(), selected_payoff_3(), selected_payoff_4() )[f]
     p  
 })
@@ -696,49 +702,17 @@ selected_structures<-reactive({
 # plot
 #
 
-output$o1_payoff_plot <- renderPlot({
-      the_payoff<-selected_payoff_1()
-      o1_pay<-model_payoff(the_payoff)*input$o1_enable  
-      op<-par()$mai
-      par(mai=c(0,0,0,0))
-      plot(o1_pay,axes=FALSE,xlab="",ylab="",type="l",lwd=3)
-      par(mai=op)
-})
-  
-output$o2_payoff_plot <- renderPlot({
-    the_payoff<-selected_payoff_2()
-    o2_pay<-model_payoff(the_payoff)*input$o2_enable   
-    op<-par()$mai
-    par(mai=c(0,0,0,0))
-    plot(o2_pay,axes=FALSE,xlab="",ylab="",type="l",lwd=3)
-    par(mai=op)
-})
+output$o1_payoff_plot <- renderPlot({make_payoff_plot(selected_payoff_1())})
+output$o2_payoff_plot <- renderPlot({make_payoff_plot(selected_payoff_2())})
+output$o3_payoff_plot <- renderPlot({make_payoff_plot(selected_payoff_3())})
+output$o4_payoff_plot <- renderPlot({make_payoff_plot(selected_payoff_4())})
 
-output$o3_payoff_plot <- renderPlot({
-    the_payoff<-selected_payoff_3()
-    o3_pay<-model_payoff(the_payoff)*input$o3_enable    
-    op<-par()$mai
-    par(mai=c(0,0,0,0))
-    plot(o3_pay,axes=FALSE,xlab="",ylab="",type="l",lwd=3)
-    par(mai=op)
-})
-  
-output$o4_payoff_plot <- renderPlot({
-    the_payoff<-selected_payoff_4()
-    o4_pay<-model_payoff(the_payoff)*input$o4_enable    
-    op<-par()$mai
-    par(mai=c(0,0,0,0))
-    plot(o4_pay,axes=FALSE,xlab="",ylab="",type="l",lwd=3)
-    par(mai=op)
-})
-  
 
 output$payoff_plot <- renderPlot({
   
-    p<-mapply(model_payoff,
-      p=selected_structures(),
-      SIMPLIFY = FALSE
-    )
+    p<-selected_structures()
+    if(length(p)<1)return(NULL)
+    p<-mapply(model_payoff,p=p,SIMPLIFY = FALSE)
     
     both_pay<-rowSums(do.call(cbind,p))
     
@@ -813,12 +787,14 @@ pnl <-reactive({
     
     reval_date<-as.Date(common_dates,format="%Y-%m-%d")
     maturity<-spx_strategy_df[date_string %in% common_dates,days]
+    roll<-spx_strategy_df[date_string %in% common_dates,start==pday]
     ptf_pnl<-drop(common_pnl %*% ptf)
     
     data.table(
       date=reval_date,
       pnl=ptf_pnl,
-      day=maturity
+      day=maturity,
+      roll=roll
     )
     
     
@@ -866,7 +842,7 @@ output$backtestPlot <- renderPlot({
       i<-1:nrow(strategy_pnl)
      }
      
-     roll_dates<-strategy_pnl[day==1,date]
+     roll_dates<-strategy_pnl[roll==TRUE,date]
      
      g1<- strategy_pnl[i]%>% ggplot() + 
       geom_line(aes(x=date,y=pnl)) + 
@@ -892,7 +868,7 @@ output$dofPlot <- renderPlot({
     g1<- ggplot(data=dof[i]) + 
       geom_line(aes(x=Date,y=PnL)) + 
       ggtitle("IDOF performance") +
-      geom_vline(xintercept = strategy_pnl$date[which(strategy_pnl$day==1)],col="red",alpha=0.25) 
+      geom_vline(xintercept = strategy_pnl[roll==TRUE,date],col="red",alpha=0.25) 
     
     plot(g1)
     

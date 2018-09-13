@@ -466,10 +466,6 @@ ui <- fluidPage(
                  "Zero cost on size of second structure" = "zero_size_2",
                  "Zero cost on stikes of second structure" = "zero_strike_2"
           ))),
-          column(width=4, radioButtons("plot_select", "Plot select",c(
-                 "Whole period" = "whole",
-                 "Live IDOF period" = "idof"
-          ),selected = "idof")),
           column(width=4,verticalLayout(
             selectizeInput(
               inputId = "underlying_select", 
@@ -488,12 +484,6 @@ ui <- fluidPage(
                options = NULL
             )
           ))
-        ),
-        tags$hr(),
-        fluidRow(
-          column(width=3,h3("Payoff")),
-          column(width=3,h3("Direction")),
-          column(width=6,h3("Strikes"))
         ),
         tags$hr(),
         tabsetPanel(
@@ -540,13 +530,8 @@ ui <- fluidPage(
     # Show a plot of the generated distribution
       mainPanel(
          tabsetPanel(
-            tabPanel(title="Stats",
-              verbatimTextOutput("summary")
-            ),
-            tabPanel(title="Plots",
-              plotOutput("backtestPlot"),
-              plotOutput("dofPlot")
-            ),
+            tabPanel(title="Stats", verbatimTextOutput("summary")),
+            tabPanel(title="Plots", plotOutput("backtestPlot") ),
             tabPanel(title="Outcomes",
               fluidRow(
                 column(width=6,selectizeInput(
@@ -831,48 +816,27 @@ output$summary<-renderText({
   
 output$backtestPlot <- renderPlot({
   
-     strategy_pnl<-pnl()
-     common_dates<-intersect(as.character(dof$Date),as.character(strategy_pnl$date))
+    strategy_pnl<-pnl()
+    common_dates<-intersect(as.character(dof$Date),as.character(strategy_pnl$date))
+    i<-which(as.character(strategy_pnl$date) %in% common_dates)
+    j<-which(as.character(dof$Date) %in% common_dates)
+    roll_dates<-strategy_pnl[roll==TRUE,date]
      
-     if(input$plot_select=="idof"){
-      i<-which(as.character(strategy_pnl$date) %in% common_dates)
-     }
-     
-     if(input$plot_select=="whole"){
-      i<-1:nrow(strategy_pnl)
-     }
-     
-     roll_dates<-strategy_pnl[roll==TRUE,date]
-     
-     g1<- strategy_pnl[i]%>% ggplot() + 
-      geom_line(aes(x=date,y=pnl)) + 
-      ggtitle("BACKTEST performance") +
+    df<-rbind(
+      strategy_pnl[i,.(date=date,pnl=pnl,source="backtest")],
+      dof[j,.(date=Date,pnl=PnL,source="dof")]
+    )[,.(date=date,pnl=rescale(pnl)),keyby="source"]
+    
+    g1 <- df%>% ggplot() + 
+      geom_line(aes(x=date,y=pnl,col=source),size=2,alpha=0.5) + 
+      ggtitle("BACKTEST vs IDOF performance") +
       geom_vline(xintercept = roll_dates,col="red",alpha=0.25) 
      
      plot(g1)
     
 })
   
-output$dofPlot <- renderPlot({
-  
-    strategy_pnl<-pnl()
-    common_dates<-intersect(as.character(dof$Date),as.character(strategy_pnl$date))
-    
-    if(input$plot_select=="idof"){
-      i<-which(as.character(dof$Date) %in% common_dates)
-    }
-     if(input$plot_select=="whole"){
-      i<-1:nrow(dof)
-     }
-    
-    g1<- ggplot(data=dof[i]) + 
-      geom_line(aes(x=Date,y=PnL)) + 
-      ggtitle("IDOF performance") +
-      geom_vline(xintercept = strategy_pnl[roll==TRUE,date],col="red",alpha=0.25) 
-    
-    plot(g1)
-    
-})
+
 
 #
 #

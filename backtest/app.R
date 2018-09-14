@@ -461,15 +461,10 @@ ui <- fluidPage(
           ))
         ),
         fluidRow(
-          column(width=4, radioButtons("strike_select", "Strike selection",c(
-                 "As selected" = "asis",
-                 "Zero cost on size of second structure" = "zero_size_2",
-                 "Zero cost on stikes of second structure" = "zero_strike_2"
-          ))),
           column(width=4,verticalLayout(
             selectizeInput(
               inputId = "underlying_select", 
-              "Underlyings", 
+              "Live Underlyings", 
               choices=underlyings, 
               selected = "SPX", 
               multiple = TRUE,
@@ -477,12 +472,26 @@ ui <- fluidPage(
             ),
             selectizeInput(
               inputId = "structure_select", 
-              "Structures", 
+              "Live Structures", 
               choices=c("Structure1","Structure2","Structure3","Structure4"), 
               selected = "Structure1", 
               multiple = TRUE,
                options = NULL
             )
+          )),
+          column(width=6, selectizeInput(
+            inputId="strike_select", 
+            label="Strike Calculation",
+            choices=c(
+              "NoSolve",
+              "SolveZeroCostStructure1",
+              "SolveZeroCostStructure2",
+              "SolveZeroCostStructure3",
+              "SolveZeroCostStructure4"
+            ),
+            selected="NoSolve",
+            multiple=FALSE,
+            options=NULL
           ))
         ),
         tags$hr(),

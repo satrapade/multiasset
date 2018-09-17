@@ -430,13 +430,13 @@ make_outcome<-function(strategy,backtest){
         yfrac=yfrac,
         pnl=mapply(
             function(s,e)100*(backtest$pnl[e]-backtest$pnl[s]),
-            s=start,
-            e=end
+            s=strategy[start==pday]$start,
+            e=strategy[start==pday]$end
         ),
         dd=mapply(
             function(s,e)round(100*(max(cummax(backtest$pnl[s:e])-backtest$pnl[s:e])),digits=2),
-            s=start,
-            e=end
+            s=strategy[start==pday]$start,
+            e=strategy[start==pday]$end
         )
     )
   ]
@@ -541,9 +541,9 @@ ui <- fluidPage(
          tabsetPanel(
             tabPanel(title="Stats", verbatimTextOutput("summary")),
             tabPanel(title="Plots", plotOutput("backtestPlot") ),
-            tabPanel(title="Outcomes",
+            tabPanel(title="Outcomes",tabsetPanel(
               fluidRow(
-                column(width=6,selectizeInput(
+                column(width=12,selectizeInput(
                   inputId = "roll_underlying_select", 
                   "Underlying", 
                   choices=underlyings, 
@@ -551,8 +551,11 @@ ui <- fluidPage(
                   multiple = FALSE,
                   options = NULL
               ))),
-              fluidRow(column(width=12,DT::dataTableOutput("strategy_outcomes")))
-            )
+              fluidRow(
+                column(width=6,DT::dataTableOutput("strategy_outcomes")),
+                column(width=6,plotOutput("outcome_plot"))
+              )
+            ))
         )
       )
   )
@@ -856,18 +859,36 @@ ndx_outcome  <- reactive({ make_outcome(ndx_strategy_df,ndx_pnl())   })
 dax_outcome  <- reactive({ make_outcome(dax_strategy_df,dax_pnl())   })
 sx5e_outcome <- reactive({ make_outcome(sx5e_strategy_df,sx5e_pnl()) })
 
-output$strategy_outcomes<-DT::renderDataTable({
-      strategy_name<-input$roll_underlying_select
-      if(length(strategy_name)<1)return(NULL)
-      outcome<-switch(
+selected_outcome<-reactive({
+   strategy_name<-input$roll_underlying_select
+    if(length(strategy_name)<1)return(spx_outcome())
+    outcome<-switch(
         strategy_name,
         SPX=spx_outcome(),
         NDX=ndx_outcome(),
         DAX=dax_outcome(),
         SX5E=sx5e_outcome()
-      )
+    )
+    outcome
+})
+
+selected_pnl<-reactive({
+   strategy_name<-input$roll_underlying_select
+    if(length(strategy_name)<1)return(spx_outcome())
+    pnl<-switch(
+        strategy_name,
+        SPX=spx_pnl(),
+        NDX=ndx_pnl(),
+        DAX=dax_pnl(),
+        SX5E=sx5e_pnl()
+    )
+    pnl
+})
+
+output$strategy_outcomes<-DT::renderDataTable({
+      outcome<-selected_outcome()
       the_table<-DT::datatable(
-        outcome, 
+        outcome[,.(roll,date,yfrac,pnl,dd)], 
         selection="single",
         rownames= FALSE,
         options = list(
@@ -876,13 +897,27 @@ output$strategy_outcomes<-DT::renderDataTable({
           searching = FALSE
         )
       ) %>%
-      formatRound("close",1) %>%
       formatRound("yfrac",3) %>%
       formatRound("pnl",2)
       
       the_table
   })
   
+output$outcome_plot<-renderPlot({
+    pnl<-selected_pnl()
+    outcome<-selected_outcome()
+    i<-input$strategy_outcomes_rows_selected
+    if(length(i)<1)return(NULL)
+    the_date<-outcome$date[i]
+    the_start<-outcome$start[i]
+    the_end<-outcome$end[i]
+    the_roll<-outcome$roll[i]
+    df<-pnl[the_start:the_end,.(date=as.Date(date,format="%Y-%m-%d"),pnl=pnl)]
+    g1<- df %>% ggplot() + geom_line(aes(x=date,y=pnl)) + ggtitle(the_date) 
+    
+    plot(g1)
+    
+  })
 
 }
 

@@ -397,7 +397,8 @@ make_backtest<-function(options,sl,strategy,vsurf)
     
     strategy_pnl<-data.table( 
       date=as.Date(strategy$date,format="%Y-%m-%d"), 
-      pnl=stopped_pnl
+      pnl=stopped_pnl,
+      pday=strategy$pday
     )
     
     strategy_pnl
@@ -906,14 +907,32 @@ output$strategy_outcomes<-DT::renderDataTable({
 output$outcome_plot<-renderPlot({
     pnl<-selected_pnl()
     outcome<-selected_outcome()
-    i<-input$strategy_outcomes_rows_selected
-    if(length(i)<1)return(NULL)
-    the_date<-outcome$date[i]
-    the_start<-outcome$start[i]
-    the_end<-outcome$end[i]
-    the_roll<-outcome$roll[i]
-    df<-pnl[the_start:the_end,.(date=as.Date(date,format="%Y-%m-%d"),pnl=pnl)]
-    g1<- df %>% ggplot() + geom_line(aes(x=date,y=pnl)) + ggtitle(the_date) 
+    o<-input$strategy_outcomes_rows_selected
+    if(length(o)<1)return(NULL)
+    the_date<-outcome$date[o]
+    the_start<-which(pnl$pday==outcome$start[o])
+    the_end<-which(pnl$pday==outcome$end[o])
+    common_dates<-intersect(
+      as.character(dof$Date,format="%Y-%m-%d"),
+      as.character(pnl$date[the_start:the_end],format="%Y-%m-%d")
+    )
+    if(length(common_dates)<1){
+      common_dates<-as.character(pnl$date[the_start:the_end],format="%Y-%m-%d")
+    }
+    i<-which(as.character(pnl$date,format="%Y-%m-%d") %in% common_dates)
+    j<-which(as.character(dof$Date,format="%Y-%m-%d") %in% common_dates)
+    
+    
+    dof_pnl<-dof[j,.(date=Date,pnl=cumsum(c(0,diff(PnL))),source="dof")]
+    backtest_pnl<-pnl[i,.(date=date,pnl=cumsum(c(0,diff(pnl))),source="backtest")]
+    if(nrow(dof_pnl)>0){
+      a<-sd(dof_pnl$pnl)/sd(backtest_pnl$pnl)
+      backtest_pnl$pnl<-a*backtest_pnl$pnl
+    }
+    
+    df<-rbind(backtest_pnl,dof_pnl)[,.(date=date,pnl=pnl),keyby="source"]
+    
+    g1<- df %>% ggplot() + geom_line(aes(x=date,y=pnl,col=source),size=2,alpha=0.75) + ggtitle(the_date) 
     
     plot(g1)
     

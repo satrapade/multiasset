@@ -484,10 +484,14 @@ ui <- fluidPage(
             label="Strike Calculation",
             choices=c(
               "NoSolve",
-              "SolveZeroCostStructure1",
-              "SolveZeroCostStructure2",
-              "SolveZeroCostStructure3",
-              "SolveZeroCostStructure4"
+              "SizeSolveZeroCostStructure1",
+              "SizeSolveZeroCostStructure2",
+              "SizeSolveZeroCostStructure3",
+              "SizeSolveZeroCostStructure4",
+              "StrikeSolveZeroCostStructure1",
+              "StrikeSolveZeroCostStructure2",
+              "StrikeSolveZeroCostStructure3",
+              "StrikeSolveZeroCostStructure4"
             ),
             selected="NoSolve",
             multiple=FALSE,

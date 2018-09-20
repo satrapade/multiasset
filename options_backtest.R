@@ -28,15 +28,36 @@ resampled_ndx_vol<-"compressed_resampled_ndx_vol.txt" %>% scan(character()) %>% 
 resampled_dax_vol<-"compressed_resampled_dax_vol.txt" %>% scan(character()) %>% decompress
 resampled_sx5e_vol<-"compressed_resampled_sx5e_vol.txt" %>% scan(character()) %>% decompress
 
-x<-sort(Reduce(
-  intersect,
-  mapply(
-    function(v)sort(unique(stri_sub(v$Date,1,10))),
-    list(resampled_spx_vol,resampled_ndx_vol,resampled_sx5e_vol,resampled_dax_vol)
+vsurfs<-list(
+  spx=resampled_spx_vol,
+  ndx=resampled_ndx_vol,
+  sx5e=resampled_sx5e_vol,
+  dax=resampled_dax_vol
+)
+
+listed_expiries<-list(
+    quote(month %in% c("March","June","September","December")),
+    quote(wday=="Friday"),
+    quote(wday_count==3)
+)
+
+# get common dates for list of
+# vol surfaces
+make_common_dates<-function(
+  vsurf_list=list(
+    resampled_spx_vol,resampled_ndx_vol,resampled_sx5e_vol,resampled_dax_vol
   )
-))
+){
+  date_strings<-mapply(
+    function(v)sort(unique(stri_sub(v$Date,1,10))),
+    vsurf_list
+  )
+  common_dates<-sort(unique(Reduce(intersect,date_strings)))
+  common_dates
+}
 
 
+# make a shedule from a list of volatility surfaces
 make_shedule<-function(
   volsurf_list,
   filter_list=expiries<-list(
@@ -46,42 +67,45 @@ make_shedule<-function(
   )
 )
 {
-  strategy_df <- volsurf[,.(
-    date=Date[1],
-    date_string=as.character(Date[1],format="%Y-%m-%d"),
-    close=ClosePrice[1]
-  ),keyby=Date][,.(
-    date=date,
-    date_string=date_string,
-    close=close
-  )]
-  strategy_df$day <- day(strategy_df$date)
-  strategy_df$mday <- mday(strategy_df$date)
-  strategy_df$qday <- qday(strategy_df$date)
-  strategy_df$yday <- yday(strategy_df$date)
-  strategy_df$pday <- seq_along(strategy_df$date)
-  strategy_df$wday <- weekdays(strategy_df$date)
-  strategy_df$month <- months(strategy_df$date)
-  strategy_df$wday_count <- ceiling(mday(strategy_df$date)/7)
-  setkey(strategy_df,date_string)
-  roll_dates<-make_strategy_roll_dates(filter_list,strategy_df)
-  strategy_df$roll<-findInterval(
-    strategy_df$pday,
-    roll_dates$pday,
-    rightmost.closed = FALSE,
-    all.inside = FALSE
+  common_date_string<-make_common_dates(volsurf_list)
+  common_date_value<-as.Date(common_date_string,format="%Y-%m-%d")
+  shedule_df <- data.table(
+    date=rep(common_date_value,times=length(volsurf_list)),
+    date_string=rep(common_date_string,times=length(volsurf_list)),
+    market=rep(names(volsurf_list),each=length(common_date_string))
   )
-  strategy_df<-strategy_df[roll>0 & roll<nrow(roll_dates)]
-  strategy_df$roll_close<-roll_dates$close[strategy_df$roll]
-  strategy_df$start<-roll_dates$start[strategy_df$roll]
-  strategy_df$end<-roll_dates$end[strategy_df$roll]
-  strategy_df$days<-roll_dates$end[strategy_df$roll]-strategy_df$pday
-  strategy_df$yfrac<-strategy_df$days/365
-  strategy_df
+  shedule_df
+}
+
+# create a roll schedule from a shedule
+make_roll_dates<-function(filter_list,shedule){
+  
+  date_df<-data.table(
+    date=shedule$date,
+    date_string=shedule$date_string,
+    day=day(shedule$date),
+    mday=mday(shedule$date),
+    qday=qday(shedule$date),
+    yday=yday(shedule$date),
+    pday=seq_along(shedule$date),
+    wday=weekdays(shedule$date),
+    month=months(shedule$date),
+    wday_count=ceiling(mday(shedule$date)/7)
+  )[,.SD,keyby=date_string]
+  
+  res<-Reduce(function(a,b)eval(bquote(.(a)[.(b)])),filter_list,init=date_df)
+  
+  res$start <- shedule$date_string[res$pday]
+  res$end   <- shedule$date_string[c(res$pday[-1],nrow(shedule))]
+  res[,.SD,keyby=date_string][sort(unique(res$date_string)),.SD,mult="first"]
+  res$roll  <- 1:nrow(res)
 }
 
 
-
+x<-make_shedule(vsurfs)
+y<-make_roll_dates(listed_expiries,x)
+x$roll<-findInterval(x$date,y$date)
+z<-y[,.SD,keyby=roll][x[,.SD,keyby=roll]]
 
 
 

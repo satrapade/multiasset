@@ -28,6 +28,13 @@ resampled_ndx_vol<-"compressed_resampled_ndx_vol.txt" %>% scan(character()) %>% 
 resampled_dax_vol<-"compressed_resampled_dax_vol.txt" %>% scan(character()) %>% decompress
 resampled_sx5e_vol<-"compressed_resampled_sx5e_vol.txt" %>% scan(character()) %>% decompress
 
+all_vol<-rbind(
+  data.table(resampled_spx_vol,market="spx"),
+  data.table(resampled_ndx_vol,market="ndx"),
+  data.table(resampled_dax_vol,market="dax"),
+  data.table(resampled_sx5e_vol,market="sx5e")
+)[,c(.SD,list(market_count=length(market))),keyby=Date]
+
 vsurfs<-list(
   spx=resampled_spx_vol,
   ndx=resampled_ndx_vol,
@@ -96,8 +103,8 @@ make_roll_dates<-function(filter_list,shedule){
   res<-Reduce(function(a,b)eval(bquote(.(a)[.(b)])),filter_list,init=date_df)
   res<-res[,.SD,keyby=date_string][sort(unique(res$date_string)),.SD,mult="first"]
   
-  res$start <- shedule$date_string[res$pday]
-  res$end   <- shedule$date_string[c(res$pday[-1],nrow(shedule))]
+  res$start <- shedule$date[res$pday]
+  res$end   <- shedule$date[c(res$pday[-1],nrow(shedule))]
   
   res$roll  <- 1:nrow(res)
   res
@@ -107,7 +114,15 @@ make_roll_dates<-function(filter_list,shedule){
 x<-make_shedule(vsurfs)
 y<-make_roll_dates(listed_expiries,x)
 x$roll<-findInterval(x$date,y$date)
-z<-y[,.SD,keyby=roll][x[,.SD,keyby=roll]]
+z<-y[,.SD,keyby=roll][x[,.SD,keyby=roll]][roll>0][,.(
+  roll=roll,
+  date=i.date,
+  date_string=i.date_string,
+  start=start,
+  end=end,
+  market=market,
+  maturity=as.integer(end-i.date)
+)]
 
 
 

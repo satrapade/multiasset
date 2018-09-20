@@ -94,11 +94,13 @@ make_roll_dates<-function(filter_list,shedule){
   )[,.SD,keyby=date_string]
   
   res<-Reduce(function(a,b)eval(bquote(.(a)[.(b)])),filter_list,init=date_df)
+  res<-res[,.SD,keyby=date_string][sort(unique(res$date_string)),.SD,mult="first"]
   
   res$start <- shedule$date_string[res$pday]
   res$end   <- shedule$date_string[c(res$pday[-1],nrow(shedule))]
-  res[,.SD,keyby=date_string][sort(unique(res$date_string)),.SD,mult="first"]
+  
   res$roll  <- 1:nrow(res)
+  res
 }
 
 

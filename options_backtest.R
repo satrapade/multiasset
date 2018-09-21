@@ -71,7 +71,9 @@ make_shedule<-function(volsurfs)
 }
 
 # create a roll schedule from a shedule
-make_roll_dates<-function(filter_list,shedule){
+make_roll_dates<-function(filter_list,vsurfs){
+  
+  shedule<-make_shedule(vsurfs)
   
   date_df<-data.table(
     date=shedule$date,
@@ -104,21 +106,27 @@ make_roll_dates<-function(filter_list,shedule){
     market=market,
     maturity=as.integer(end-i.date)
   )]
-  res4
+  px<-all_vol[,.(
+      date=as.Date(stri_sub(Date[1],1,10),format="%Y-%m-%d"),
+      close=ClosePrice[1]
+  ),keyby=c("market","Date"),][,.(date,market,close)]
+  
+  res5<-px[,.SD,keyby=c("date","market")][res4[,.SD,keyby=c("date","market")]]
+  
+  res5
 }
 
 
 
 shedule<-make_roll_dates(
   filter_list=listed_expiries,
-  shedule=make_shedule(all_vol)
+  vsurfs=all_vol
 )
 
 
-
-
-
-
+shedule %>% 
+  ggplot() +
+  geom_line(aes(x=date,y=close,col=market))
 
 
 

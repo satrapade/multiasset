@@ -28,19 +28,12 @@ resampled_ndx_vol<-"compressed_resampled_ndx_vol.txt" %>% scan(character()) %>% 
 resampled_dax_vol<-"compressed_resampled_dax_vol.txt" %>% scan(character()) %>% decompress
 resampled_sx5e_vol<-"compressed_resampled_sx5e_vol.txt" %>% scan(character()) %>% decompress
 
-all_vol<-rbind(
+all_vol<-rbind( # data.table with all volatilities
   data.table(resampled_spx_vol,market="spx"),
   data.table(resampled_ndx_vol,market="ndx"),
   data.table(resampled_dax_vol,market="dax"),
   data.table(resampled_sx5e_vol,market="sx5e")
 )[,c(.SD,list(market_count=length(market))),keyby=Date]
-
-vsurfs<-list(
-  spx=resampled_spx_vol,
-  ndx=resampled_ndx_vol,
-  sx5e=resampled_sx5e_vol,
-  dax=resampled_dax_vol
-)
 
 listed_expiries<-list(
     quote(month %in% c("March","June","September","December")),
@@ -48,38 +41,31 @@ listed_expiries<-list(
     quote(wday_count==3)
 )
 
-# get common dates for list of
-# vol surfaces
-make_common_dates<-function(
-  vsurf_list=list(
-    resampled_spx_vol,resampled_ndx_vol,resampled_sx5e_vol,resampled_dax_vol
-  )
-){
-  date_strings<-mapply(
-    function(v)sort(unique(stri_sub(v$Date,1,10))),
-    vsurf_list
-  )
-  common_dates<-sort(unique(Reduce(intersect,date_strings)))
-  common_dates
+
+#
+# get common dates for all markets 
+# in volsurface table
+make_common_dates<-function(vsurfs){
+  vsurfs[
+    ,.(date_string=stri_sub(Date[1],1,10)),
+    keyby=c("market","Date")
+  ][
+    ,.(markets=length(market)),keyby=date_string
+  ][
+    markets==max(markets),as.Date(date_string,format="%Y-%m-%d")
+  ]
 }
 
 
+#
 # make a shedule from a list of volatility surfaces
-make_shedule<-function(
-  volsurf_list,
-  filter_list=expiries<-list(
-    quote(month %in% c("March","June","September","December")),
-    quote(wday=="Friday"),
-    quote(wday_count==3)
-  )
-)
+make_shedule<-function(volsurfs)
 {
-  common_date_string<-make_common_dates(volsurf_list)
-  common_date_value<-as.Date(common_date_string,format="%Y-%m-%d")
+  common_dates<-make_common_dates(volsurfs)
+  markets<-sort(unique(volsurfs$market))
   shedule_df <- data.table(
-    date=rep(common_date_value,times=length(volsurf_list)),
-    date_string=rep(common_date_string,times=length(volsurf_list)),
-    market=rep(names(volsurf_list),each=length(common_date_string))
+    date=rep(common_dates,times=length(markets)),
+    market=rep(markets,each=length(common_dates))
   )
   shedule_df
 }
@@ -89,7 +75,6 @@ make_roll_dates<-function(filter_list,shedule){
   
   date_df<-data.table(
     date=shedule$date,
-    date_string=shedule$date_string,
     day=day(shedule$date),
     mday=mday(shedule$date),
     qday=qday(shedule$date),
@@ -98,37 +83,36 @@ make_roll_dates<-function(filter_list,shedule){
     wday=weekdays(shedule$date),
     month=months(shedule$date),
     wday_count=ceiling(mday(shedule$date)/7)
-  )[,.SD,keyby=date_string]
+  )[,.SD,keyby=date]
   
-  res<-Reduce(function(a,b)eval(bquote(.(a)[.(b)])),filter_list,init=date_df)
-  res<-res[,.SD,keyby=date_string][sort(unique(res$date_string)),.SD,mult="first"]
-  
-  res$start <- shedule$date[res$pday]
-  res$end   <- shedule$date[c(res$pday[-1],nrow(shedule))]
-  
-  res$roll  <- 1:nrow(res)
-  res
+  res0<-Reduce(function(a,b)eval(bquote(.(a)[.(b)])),filter_list,init=date_df)
+  res1<-res0[,.SD,keyby=date]
+  ndx<-sort(unique(res1$date))
+  res2<-res1[J(ndx),.SD,mult="first"]
+  res3<-data.table(
+    res2,
+    start=shedule$date[res2$pday],
+    end=shedule$date[c(res2$pday[-1],nrow(shedule))],
+    roll=1:nrow(res2)
+  )
+  shedule_with_roll<-data.table(shedule,roll=findInterval(shedule$date,res3$date))
+  res4<-res3[,.SD,keyby=roll][shedule_with_roll[,.SD,keyby=roll]][roll>0][,.(
+    roll=roll,
+    date=i.date,
+    start=start,
+    end=end,
+    market=market,
+    maturity=as.integer(end-i.date)
+  )]
+  res4
 }
 
 
-x<-make_shedule(vsurfs)
-y<-make_roll_dates(listed_expiries,x)
-x$roll<-findInterval(x$date,y$date)
-z<-y[,.SD,keyby=roll][x[,.SD,keyby=roll]][roll>0][,.(
-  roll=roll,
-  date=i.date,
-  date_string=i.date_string,
-  start=start,
-  end=end,
-  market=market,
-  maturity=as.integer(end-i.date)
-)]
 
-
-
-
-
-
+shedule<-make_roll_dates(
+  filter_list=listed_expiries,
+  shedule=make_shedule(all_vol)
+)
 
 
 

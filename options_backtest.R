@@ -108,8 +108,9 @@ make_roll_dates<-function(filter_list,vsurfs){
   )]
   px<-all_vol[,.(
       date=as.Date(stri_sub(Date[1],1,10),format="%Y-%m-%d"),
-      close=ClosePrice[1]
-  ),keyby=c("market","Date"),][,.(date,market,close)]
+      close=ClosePrice[1],
+      vol=mean(ImpliedVol)
+  ),keyby=c("market","Date"),][,.(date,market,close,vol)]
   
   res5<-px[,.SD,keyby=c("date","market")][res4[,.SD,keyby=c("date","market")]]
   
@@ -128,6 +129,9 @@ shedule %>%
   ggplot() +
   geom_line(aes(x=date,y=close,col=market))
 
+shedule %>% 
+  ggplot() +
+  geom_line(aes(x=date,y=vol,col=market))
 
 
 

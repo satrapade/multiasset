@@ -1,3 +1,5 @@
+
+
 #
 # This is a Shiny web application. You can run the application by clicking
 # the 'Run App' button above.
@@ -398,6 +400,8 @@ make_backtest<-function(options,sl,strategy,vsurf)
     strategy_pnl<-data.table( 
       date=as.Date(strategy$date,format="%Y-%m-%d"), 
       pnl=stopped_pnl
+      pnl=stopped_pnl,
+      pday=strategy$pday
     )
     
     strategy_pnl
@@ -430,13 +434,13 @@ make_outcome<-function(strategy,backtest){
         yfrac=yfrac,
         pnl=mapply(
             function(s,e)100*(backtest$pnl[e]-backtest$pnl[s]),
-            s=start,
-            e=end
+            s=strategy[start==pday]$start,
+            e=strategy[start==pday]$end
         ),
         dd=mapply(
             function(s,e)round(100*(max(cummax(backtest$pnl[s:e])-backtest$pnl[s:e])),digits=2),
-            s=start,
-            e=end
+            s=strategy[start==pday]$start,
+            e=strategy[start==pday]$end
         )
     )
   ]
@@ -484,14 +488,10 @@ ui <- fluidPage(
             label="Strike Calculation",
             choices=c(
               "NoSolve",
-              "SizeSolveZeroCostStructure1",
-              "SizeSolveZeroCostStructure2",
-              "SizeSolveZeroCostStructure3",
-              "SizeSolveZeroCostStructure4",
-              "StrikeSolveZeroCostStructure1",
-              "StrikeSolveZeroCostStructure2",
-              "StrikeSolveZeroCostStructure3",
-              "StrikeSolveZeroCostStructure4"
+              "SolveZeroCostStructure1",
+              "SolveZeroCostStructure2",
+              "SolveZeroCostStructure3",
+              "SolveZeroCostStructure4"
             ),
             selected="NoSolve",
             multiple=FALSE,
@@ -545,9 +545,9 @@ ui <- fluidPage(
          tabsetPanel(
             tabPanel(title="Stats", verbatimTextOutput("summary")),
             tabPanel(title="Plots", plotOutput("backtestPlot") ),
-            tabPanel(title="Outcomes",
+            tabPanel(title="Outcomes",tabsetPanel(
               fluidRow(
-                column(width=6,selectizeInput(
+                column(width=12,selectizeInput(
                   inputId = "roll_underlying_select", 
                   "Underlying", 
                   choices=underlyings, 
@@ -555,8 +555,11 @@ ui <- fluidPage(
                   multiple = FALSE,
                   options = NULL
               ))),
-              fluidRow(column(width=12,DT::dataTableOutput("strategy_outcomes")))
-            )
+              fluidRow(
+                column(width=6,DT::dataTableOutput("strategy_outcomes")),
+                column(width=6,plotOutput("outcome_plot"))
+              )
+            ))
         )
       )
   )
@@ -860,18 +863,36 @@ ndx_outcome  <- reactive({ make_outcome(ndx_strategy_df,ndx_pnl())   })
 dax_outcome  <- reactive({ make_outcome(dax_strategy_df,dax_pnl())   })
 sx5e_outcome <- reactive({ make_outcome(sx5e_strategy_df,sx5e_pnl()) })
 
-output$strategy_outcomes<-DT::renderDataTable({
-      strategy_name<-input$roll_underlying_select
-      if(length(strategy_name)<1)return(NULL)
-      outcome<-switch(
+selected_outcome<-reactive({
+   strategy_name<-input$roll_underlying_select
+    if(length(strategy_name)<1)return(spx_outcome())
+    outcome<-switch(
         strategy_name,
         SPX=spx_outcome(),
         NDX=ndx_outcome(),
         DAX=dax_outcome(),
         SX5E=sx5e_outcome()
-      )
+    )
+    outcome
+})
+
+selected_pnl<-reactive({
+   strategy_name<-input$roll_underlying_select
+    if(length(strategy_name)<1)return(spx_outcome())
+    pnl<-switch(
+        strategy_name,
+        SPX=spx_pnl(),
+        NDX=ndx_pnl(),
+        DAX=dax_pnl(),
+        SX5E=sx5e_pnl()
+    )
+    pnl
+})
+
+output$strategy_outcomes<-DT::renderDataTable({
+      outcome<-selected_outcome()
       the_table<-DT::datatable(
-        outcome, 
+        outcome[,.(roll,date,yfrac,pnl,dd)], 
         selection="single",
         rownames= FALSE,
         options = list(
@@ -880,17 +901,50 @@ output$strategy_outcomes<-DT::renderDataTable({
           searching = FALSE
         )
       ) %>%
-      formatRound("close",1) %>%
       formatRound("yfrac",3) %>%
       formatRound("pnl",2)
       
       the_table
   })
   
+output$outcome_plot<-renderPlot({
+    pnl<-selected_pnl()
+    outcome<-selected_outcome()
+    o<-input$strategy_outcomes_rows_selected
+    if(length(o)<1)return(NULL)
+    the_date<-outcome$date[o]
+    the_start<-which(pnl$pday==outcome$start[o])
+    the_end<-which(pnl$pday==outcome$end[o])
+    common_dates<-intersect(
+      as.character(dof$Date,format="%Y-%m-%d"),
+      as.character(pnl$date[the_start:the_end],format="%Y-%m-%d")
+    )
+    if(length(common_dates)<1){
+      common_dates<-as.character(pnl$date[the_start:the_end],format="%Y-%m-%d")
+    }
+    i<-which(as.character(pnl$date,format="%Y-%m-%d") %in% common_dates)
+    j<-which(as.character(dof$Date,format="%Y-%m-%d") %in% common_dates)
+    
+    
+    dof_pnl<-dof[j,.(date=Date,pnl=cumsum(c(0,diff(PnL))),source="dof")]
+    backtest_pnl<-pnl[i,.(date=date,pnl=cumsum(c(0,diff(pnl))),source="backtest")]
+    if(nrow(dof_pnl)>0){
+      a<-sd(dof_pnl$pnl)/sd(backtest_pnl$pnl)
+      backtest_pnl$pnl<-a*backtest_pnl$pnl
+    }
+    
+    df<-rbind(backtest_pnl,dof_pnl)[,.(date=date,pnl=pnl),keyby="source"]
+    
+    g1<- df %>% ggplot() + geom_line(aes(x=date,y=pnl,col=source),size=2,alpha=0.75) + ggtitle(the_date) 
+    
+    plot(g1)
+    
+  })
 
 }
 
 # Run the application 
 shinyApp(ui = ui, server = server)
+
 
 

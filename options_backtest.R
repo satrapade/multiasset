@@ -126,13 +126,17 @@ shedule<-make_roll_dates(
 )
 
 
-shedule %>% 
+g1<-shedule %>% 
   ggplot() +
   geom_line(aes(x=date,y=close,col=market))
 
-shedule %>% 
+plot(g1)
+
+g2<-shedule %>% 
   ggplot() +
   geom_line(aes(x=date,y=vol,col=market))
+
+plot(g2)
 
 
 

@@ -399,7 +399,6 @@ make_backtest<-function(options,sl,strategy,vsurf)
     
     strategy_pnl<-data.table( 
       date=as.Date(strategy$date,format="%Y-%m-%d"), 
-      pnl=stopped_pnl
       pnl=stopped_pnl,
       pday=strategy$pday
     )

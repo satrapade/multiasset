@@ -1,3 +1,4 @@
+
 #
 # backtest components
 #
@@ -23,79 +24,115 @@ require(Matrix)
 require(akima)
 require(ggplot2)
 
-resampled_spx_vol<-"backtest/compressed_resampled_spx_vol.txt" %>% scan(character()) %>% decompress
-resampled_ndx_vol<-"backtest/compressed_resampled_ndx_vol.txt" %>% scan(character()) %>% decompress
-resampled_dax_vol<-"backtest/compressed_resampled_dax_vol.txt" %>% scan(character()) %>% decompress
-resampled_sx5e_vol<-"backtest/compressed_resampled_sx5e_vol.txt" %>% scan(character()) %>% decompress
+resampled_spx_vol<-"compressed_resampled_spx_vol.txt" %>% scan(character()) %>% decompress
+resampled_ndx_vol<-"compressed_resampled_ndx_vol.txt" %>% scan(character()) %>% decompress
+resampled_dax_vol<-"compressed_resampled_dax_vol.txt" %>% scan(character()) %>% decompress
+resampled_sx5e_vol<-"compressed_resampled_sx5e_vol.txt" %>% scan(character()) %>% decompress
 
-x<-sort(Reduce(
-  intersect,
-  mapply(
-    function(v)sort(unique(stri_sub(v$Date,1,10))),
-    list(resampled_spx_vol,resampled_ndx_vol,resampled_sx5e_vol,resampled_dax_vol)
-  )
-))
+all_vol<-rbind( # data.table with all volatilities
+  data.table(resampled_spx_vol,market="spx"),
+  data.table(resampled_ndx_vol,market="ndx"),
+  data.table(resampled_dax_vol,market="dax"),
+  data.table(resampled_sx5e_vol,market="sx5e")
+)[,c(.SD,list(market_count=length(market))),keyby=Date]
 
-
-make_shedule<-function(
-  volsurf_list,
-  filter_list=expiries<-list(
+listed_expiries<-list(
     quote(month %in% c("March","June","September","December")),
     quote(wday=="Friday"),
     quote(wday_count==3)
-  )
 )
+
+
+#
+# get common dates for all markets 
+# in volsurface table
+make_common_dates<-function(vsurfs){
+  vsurfs[
+    ,.(date_string=stri_sub(Date[1],1,10)),
+    keyby=c("market","Date")
+  ][
+    ,.(markets=length(market)),keyby=date_string
+  ][
+    markets==max(markets),as.Date(date_string,format="%Y-%m-%d")
+  ]
+}
+
+
+#
+# make a shedule from a list of volatility surfaces
+make_shedule<-function(volsurfs)
 {
-  strategy_df <- volsurf[,.(
-    date=Date[1],
-    date_string=as.character(Date[1],format="%Y-%m-%d"),
-    close=ClosePrice[1]
-  ),keyby=Date][,.(
-    date=date,
-    date_string=date_string,
-    close=close
-  )]
-  strategy_df$day <- day(strategy_df$date)
-  strategy_df$mday <- mday(strategy_df$date)
-  strategy_df$qday <- qday(strategy_df$date)
-  strategy_df$yday <- yday(strategy_df$date)
-  strategy_df$pday <- seq_along(strategy_df$date)
-  strategy_df$wday <- weekdays(strategy_df$date)
-  strategy_df$month <- months(strategy_df$date)
-  strategy_df$wday_count <- ceiling(mday(strategy_df$date)/7)
-  setkey(strategy_df,date_string)
-  roll_dates<-make_strategy_roll_dates(filter_list,strategy_df)
-  strategy_df$roll<-findInterval(
-    strategy_df$pday,
-    roll_dates$pday,
-    rightmost.closed = FALSE,
-    all.inside = FALSE
+  common_dates<-make_common_dates(volsurfs)
+  markets<-sort(unique(volsurfs$market))
+  shedule_df <- data.table(
+    date=rep(common_dates,times=length(markets)),
+    market=rep(markets,each=length(common_dates))
   )
-  strategy_df<-strategy_df[roll>0 & roll<nrow(roll_dates)]
-  strategy_df$roll_close<-roll_dates$close[strategy_df$roll]
-  strategy_df$start<-roll_dates$start[strategy_df$roll]
-  strategy_df$end<-roll_dates$end[strategy_df$roll]
-  strategy_df$days<-roll_dates$end[strategy_df$roll]-strategy_df$pday
-  strategy_df$yfrac<-strategy_df$days/365
-  strategy_df
+  shedule_df
+}
+
+# create a roll schedule from a shedule
+make_roll_dates<-function(filter_list,vsurfs){
+  
+  shedule<-make_shedule(vsurfs)
+  
+  date_df<-data.table(
+    date=shedule$date,
+    day=day(shedule$date),
+    mday=mday(shedule$date),
+    qday=qday(shedule$date),
+    yday=yday(shedule$date),
+    pday=seq_along(shedule$date),
+    wday=weekdays(shedule$date),
+    month=months(shedule$date),
+    wday_count=ceiling(mday(shedule$date)/7)
+  )[,.SD,keyby=date]
+  
+  res0<-Reduce(function(a,b)eval(bquote(.(a)[.(b)])),filter_list,init=date_df)
+  res1<-res0[,.SD,keyby=date]
+  ndx<-sort(unique(res1$date))
+  res2<-res1[J(ndx),.SD,mult="first"]
+  res3<-data.table(
+    res2,
+    start=shedule$date[res2$pday],
+    end=shedule$date[c(res2$pday[-1],nrow(shedule))],
+    roll=1:nrow(res2)
+  )
+  shedule_with_roll<-data.table(shedule,roll=findInterval(shedule$date,res3$date))
+  res4<-res3[,.SD,keyby=roll][shedule_with_roll[,.SD,keyby=roll]][roll>0][,.(
+    roll=roll,
+    date=i.date,
+    start=start,
+    end=end,
+    market=market,
+    maturity=as.integer(end-i.date)
+  )]
+  px<-all_vol[,.(
+      date=as.Date(stri_sub(Date[1],1,10),format="%Y-%m-%d"),
+      close=ClosePrice[1],
+      vol=mean(ImpliedVol)
+  ),keyby=c("market","Date"),][,.(date,market,close,vol)]
+  
+  res5<-px[,.SD,keyby=c("date","market")][res4[,.SD,keyby=c("date","market")]]
+  
+  res5
 }
 
 
 
+shedule<-make_roll_dates(
+  filter_list=listed_expiries,
+  vsurfs=all_vol
+)
 
 
+shedule %>% 
+  ggplot() +
+  geom_line(aes(x=date,y=close,col=market))
 
-
-
-
-
-
-
-
-
-
-
-
+shedule %>% 
+  ggplot() +
+  geom_line(aes(x=date,y=vol,col=market))
 
 
 

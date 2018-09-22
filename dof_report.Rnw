@@ -173,21 +173,27 @@ g3<-dof %>%
 \tableofcontents
 
 \newpage
-\section{Dataset}
-
-We use historical volatility surfaces 
-
-\Sexpr{make_plot(plot(g1),height="10cm",width="10cm")}
-
-\Sexpr{make_plot(plot(g2),height="10cm",width="10cm")}
-
-
-\newpage
 \section{DOF performance}
 
 \begin{center}
-\Sexpr{make_plot(plot(g3),height="10cm",width="10cm")}
+\Sexpr{make_plot(plot(g3),height="15cm",width="15cm")}
 \end{center}
+
+We wish to investigate the cause of infrequent, relatively large drawdowns.
+
+\newpage
+\section{Dataset}
+
+We use historical volatility surfaces from JPM's OptionMetrics database.
+
+\begin{tabular}{m{10cm}m{10cm}}
+\Sexpr{make_plot(plot(g1),height="10cm",width="10cm")}
+&
+\Sexpr{make_plot(plot(g2),height="10cm",width="10cm")}
+\end{tabular}
+
+
+
 
 \newpage
 \section{backtest}

@@ -1,6 +1,4 @@
-
 \documentclass{article}
-
 
 
 \usepackage[portrait, headheight = 0cm, margin=0.25cm, top = 0.25cm]{geometry} 
@@ -55,7 +53,28 @@ all_vol<-rbind( # data.table with all volatilities
   data.table(resampled_ndx_vol,market="ndx"),
   data.table(resampled_dax_vol,market="dax"),
   data.table(resampled_sx5e_vol,market="sx5e")
-)[,c(.SD,list(market_count=length(market))),keyby=Date]
+)[,.(
+    Date=as.Date(stri_sub(Date,1,10),format="%Y-%m-%d"),
+    Strike=Strike,
+    Days=Days,
+    ImpliedVol=ImpliedVol,
+    ClosePrice=ClosePrice,
+    market=market
+)][,
+  .(
+    Strike=Strike,
+    Days=Days,
+    ImpliedVol=ImpliedVol,
+    ClosePrice=ClosePrice,
+    market=market,
+    market_count=length(market)
+  ),
+  keyby=Date
+][ClosePrice>0]
+
+# surface pillars
+all_strikes<-all_vol[,.(strikes=sort(unique(Strike))),keyby=market]
+all_maturities<-all_vol[,.(maturities=sort(unique(Days))),keyby=market]
 
 listed_expiries<-list(
     quote(month %in% c("March","June","September","December")),
@@ -69,12 +88,12 @@ listed_expiries<-list(
 # in volsurface table
 make_common_dates<-function(vsurfs){
   vsurfs[
-    ,.(date_string=stri_sub(Date[1],1,10)),
+    ,.(date=Date[1]),
     keyby=c("market","Date")
   ][
-    ,.(markets=length(market)),keyby=date_string
+    ,.(markets=length(market)),keyby=date
   ][
-    markets==max(markets),as.Date(date_string,format="%Y-%m-%d")
+    markets==max(markets),date
   ]
 }
 
@@ -168,13 +187,113 @@ interpolate_vol<-function(date,strike,days,vsurf)
   ))
 }
 
-
-
 shedule<-make_roll_dates(
   filter_list=listed_expiries,
   vsurfs=all_vol
 )
 
+# option models
+
+EC <- function(S,X,t,r,v)
+{
+  d1 <- (log(S/X)+(r+0.5*v^2)*t)/(v*sqrt(t))
+  d2 <- d1-v*sqrt(t)
+  S*pnorm(d1)-X*exp(-r*t)*pnorm(d2)
+}
+
+
+EP  <- function(S,X,t,r,v)
+{
+  d1 <- (log(S/X)+(r+0.5*v^2)*t)/(v*sqrt(t))
+  d2 <- d1-v*sqrt(t)
+  X*exp(-r*t)*pnorm(-d2)-S*pnorm(-d1)
+}
+
+#
+#
+#
+compute_option_premium<-function(
+  shedule,
+  all_vol,
+  strike_fun=function(close)close
+)merge(
+  x=shedule[date==start,.(market,strike=strike_fun(close),roll)],
+  y=shedule[,.(date,market,roll,maturity)],
+  by.x=c("market","roll"),
+  by.y=c("market","roll")
+)[,
+  local({
+    the_strikes<-all_strikes[market,strikes]
+    the_maturities<-all_maturities[market,maturities]
+    i<-findInterval(pmax(strike,0),the_strikes)
+    j<-findInterval(pmax(maturity,0),the_maturities)
+    dets<-data.table(
+      date=date,
+      market=market,
+      lo_strike=the_strikes[i],
+      hi_strike=the_strikes[i+1],
+      lo_maturity=the_maturities[j],
+      hi_maturity=the_maturities[j+1]
+    )
+    vol_ll<-merge(
+      x=dets,
+      y=all_vol,
+      by.x=c("market","date","lo_strike","lo_maturity"),
+      by.y=c("market","Date","Strike","Days")
+    )$ImpliedVol
+    vol_lh<-merge(
+      x=dets,
+      y=all_vol,
+      by.x=c("market","date","lo_strike","hi_maturity"),
+      by.y=c("market","Date","Strike","Days")
+    )$ImpliedVol
+    vol_hl<-merge(
+      x=dets,
+      y=all_vol,
+      by.x=c("market","date","hi_strike","lo_maturity"),
+      by.y=c("market","Date","Strike","Days")
+    )$ImpliedVol
+    vol_hh<-merge(
+      x=dets,
+      y=all_vol,
+      by.x=c("market","date","hi_strike","hi_maturity"),
+      by.y=c("market","Date","Strike","Days")
+    )$ImpliedVol
+    t_strike<-(strike-dets$lo_strike)/(dets$hi_strike-dets$lo_strike)
+    t_mat<-(maturity-dets$lo_maturity)/(dets$hi_maturity-dets$lo_maturity)
+    vol<-rowSums(cbind(
+      vol_ll*(1-t_strike)*(1-t_mat),
+      vol_hl*(t_strike)*(1-t_mat),
+      vol_lh*(1-t_strike)*(t_mat),
+      vol_hh*(t_strike)*(t_mat)
+    ))
+    list(date=date,strike=strike,strike_maturity=maturity,strike_vol=vol)
+  }),
+  keyby=market
+]
+
+
+system.time(backtest1<-merge(
+  x=shedule,
+  y=compute_option_premium(
+    shedule,
+    all_vol,
+    strike_fun=identity
+  )[,.(market,date,strike,strike_vol)],
+  by.x=c("date","market"),
+  by.y=c("date","market")
+))
+
+system.time(backtest2<-merge(
+  x=shedule[market=="spx"],
+  y=compute_option_premium(
+    shedule[market=="spx"],
+    all_vol[market=="spx"],
+    strike_fun=function(x)x*0.9
+  )[,.(market,date,strike,strike_vol)],
+  by.x=c("date","market"),
+  by.y=c("date","market")
+))
 
 g1<-shedule %>% 
   ggplot() +
@@ -231,3 +350,5 @@ We use historical volatility surfaces from JPM's OptionMetrics database.
 
 
 \end{document}
+
+

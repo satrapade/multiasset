@@ -139,6 +139,35 @@ make_roll_dates<-function(filter_list,vsurfs){
   res5
 }
 
+#
+# interpolate vols
+# on resampled vol surface
+#
+interpolate_vol<-function(date,strike,days,vsurf)
+{
+  strikes<-sort(unique(vsurf$Strike))
+  maturities<-sort(unique(vsurf$Days))
+  option_dets<-data.table(
+    date=date,
+    lo_strike=strikes[findInterval(strike,strikes)],
+    hi_strike=strikes[findInterval(strike,strikes)+1],
+    lo_mat=maturities[findInterval(days,maturities)],
+    hi_mat=maturities[findInterval(days,maturities)+1]
+  )
+  vol_ll<-merge(x=option_dets,y=vsurf,by.x=c("date","lo_strike","lo_mat"),by.y=c("Date","Strike","Days"))$ImpliedVol
+  vol_lh<-merge(x=option_dets,y=vsurf,by.x=c("date","lo_strike","hi_mat"),by.y=c("Date","Strike","Days"))$ImpliedVol
+  vol_hl<-merge(x=option_dets,y=vsurf,by.x=c("date","hi_strike","lo_mat"),by.y=c("Date","Strike","Days"))$ImpliedVol
+  vol_hh<-merge(x=option_dets,y=vsurf,by.x=c("date","hi_strike","hi_mat"),by.y=c("Date","Strike","Days"))$ImpliedVol
+  t_strike<-(strike-option_dets$lo_strike)/(option_dets$hi_strike-option_dets$lo_strike)
+  t_mat<-(days-option_dets$lo_mat)/(option_dets$hi_mat-option_dets$lo_mat)
+  rowSums(cbind(
+    vol_ll*(1-t_strike)*(1-t_mat),
+    vol_hl*(t_strike)*(1-t_mat),
+    vol_lh*(1-t_strike)*(t_mat),
+    vol_hh*(t_strike)*(t_mat)
+  ))
+}
+
 
 
 shedule<-make_roll_dates(

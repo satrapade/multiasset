@@ -375,23 +375,37 @@ system.time(backtest3<-merge(
 ))
 
 backtest<-data.table(
+  market=backtest3$market,
   date=backtest2$date,
   start=backtest2$start,
   end=backtest2$end,
+  maturity=backtest2$maturity,
   intrinsic=backtest2$strike-backtest3$strike,
-  reval=backtest2$premium-backtest3$premium,
-  market=backtest3$market
-)
+  reval=backtest2$premium-backtest3$premium
+)[,c(.SD,list(
+  cash=cumsum(ifelse(
+    start==date,
+    -reval,
+    0
+  )+ifelse(
+    maturity==1,
+    reval,
+    0
+  )),
+  holdings=ifelse(maturity==1,0,reval)
+))]
 
-g4<-melt(backtest,id.vars="date",measure.vars=c("intrinsic","reval")) %>% 
+g4<-backtest %>% 
   ggplot() +
-  geom_line(aes(x=date,y=value,col=variable))+
+  geom_line(aes(x=date,y=cash+holdings))+
   ggtitle("Quarterly rolling short 100-90 pct SPX put spreads")
 
 @
 
 \newpage
-\section{backtest}
+\section{Backtest}
+
+
 
 \begin{center}
 \Sexpr{make_plot(plot(g4),height="15cm",width="15cm")}

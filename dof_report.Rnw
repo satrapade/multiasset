@@ -215,10 +215,11 @@ EP  <- function(S,X,t,r,v)
 compute_option_premium<-function(
   shedule,
   all_vol,
-  strike_fun=function(close)close
+  strike_fun=function(close)close,
+  model=EC
 )merge(
   x=shedule[date==start,.(market,strike=strike_fun(close),roll)],
-  y=shedule[,.(date,market,roll,maturity)],
+  y=shedule[,.(date,market,close,roll,maturity)],
   by.x=c("market","roll"),
   by.y=c("market","roll")
 )[,
@@ -267,7 +268,8 @@ compute_option_premium<-function(
       vol_lh*(1-t_strike)*(t_mat),
       vol_hh*(t_strike)*(t_mat)
     ))
-    list(date=date,strike=strike,strike_maturity=maturity,strike_vol=vol)
+    premium<-model(close, strike, maturity/365, 0,vol)
+    list(date=date,strike=strike,strike_maturity=maturity,strike_vol=vol,premium=premium)
   }),
   keyby=market
 ]
@@ -278,8 +280,9 @@ system.time(backtest1<-merge(
   y=compute_option_premium(
     shedule,
     all_vol,
-    strike_fun=identity
-  )[,.(market,date,strike,strike_vol)],
+    strike_fun=identity,
+    model=EC
+  )[,.(market,date,strike,strike_vol,premium)],
   by.x=c("date","market"),
   by.y=c("date","market")
 ))
@@ -289,21 +292,24 @@ system.time(backtest2<-merge(
   y=compute_option_premium(
     shedule[market=="spx"],
     all_vol[market=="spx"],
-    strike_fun=function(x)x*0.9
-  )[,.(market,date,strike,strike_vol)],
+    strike_fun=function(x)x*0.9,
+    model=EP
+  )[,.(market,date,strike,strike_vol,premium)],
   by.x=c("date","market"),
   by.y=c("date","market")
 ))
 
 g1<-shedule %>% 
   ggplot() +
-  geom_line(aes(x=date,y=close,col=market))
+  geom_line(aes(x=date,y=close,col=market)) +
+  ggtitle("Market closing prices")
 
 
 
 g2<-shedule %>% 
   ggplot() +
-  geom_line(aes(x=date,y=vol,col=market))
+  geom_line(aes(x=date,y=vol,col=market)) +
+  ggtitle("Market average volatility")
 
 
 dof<-fread("dof.csv")
@@ -313,6 +319,8 @@ dof$PnL<-cumsum(dof$PnL)
 g3<-dof %>% 
   ggplot() +
   geom_line(aes(x=Date,y=PnL))
+
+
 
 
 @
@@ -341,11 +349,53 @@ We use historical volatility surfaces from JPM's OptionMetrics database.
 \end{tabular}
 
 
+<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
+system.time(backtest2<-merge(
+  x=shedule[market=="spx"],
+  y=compute_option_premium(
+    shedule[market=="spx"],
+    all_vol[market=="spx"],
+    strike_fun=function(x)x*0.9,
+    model=EP
+  )[,.(market,date,strike,strike_vol,premium)],
+  by.x=c("date","market"),
+  by.y=c("date","market")
+))
 
+system.time(backtest3<-merge(
+  x=shedule[market=="spx"],
+  y=compute_option_premium(
+    shedule[market=="spx"],
+    all_vol[market=="spx"],
+    strike_fun=function(x)x*1.0,
+    model=EP
+  )[,.(market,date,strike,strike_vol,premium)],
+  by.x=c("date","market"),
+  by.y=c("date","market")
+))
+
+backtest<-data.table(
+  date=backtest2$date,
+  start=backtest2$start,
+  end=backtest2$end,
+  intrinsic=backtest2$strike-backtest3$strike,
+  reval=backtest2$premium-backtest3$premium,
+  market=backtest3$market
+)
+
+g4<-melt(backtest,id.vars="date",measure.vars=c("intrinsic","reval")) %>% 
+  ggplot() +
+  geom_line(aes(x=date,y=value,col=variable))+
+  ggtitle("Quarterly rolling short 100-90 pct SPX put spreads")
+
+@
 
 \newpage
 \section{backtest}
 
+\begin{center}
+\Sexpr{make_plot(plot(g4),height="15cm",width="15cm")}
+\end{center}
 
 
 

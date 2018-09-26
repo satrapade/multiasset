@@ -288,83 +288,6 @@ compute_option_premium<-function(
   keyby=market
 ]
 
-
-system.time(backtest1<-merge(
-  x=shedule,
-  y=compute_option_premium(
-    shedule,
-    all_vol,
-    strike_fun=function(close,vol,maturity)close,
-    model=EC
-  )[,.(market,date,strike,strike_vol,premium)],
-  by.x=c("date","market"),
-  by.y=c("date","market")
-))
-
-system.time(backtest2<-merge(
-  x=shedule[market=="spx"],
-  y=compute_option_premium(
-    shedule[market=="spx"],
-    all_vol[market=="spx"],
-    strike_fun=function(close,vol,maturity)close*0.9,
-    model=EP
-  )[,.(market,date,strike,strike_vol,premium)],
-  by.x=c("date","market"),
-  by.y=c("date","market")
-))
-
-g1<-shedule %>% 
-  ggplot() +
-  geom_line(aes(x=date,y=close,col=market)) +
-  ggtitle("Market closing prices")
-
-
-
-g2<-shedule %>% 
-  ggplot() +
-  geom_line(aes(x=date,y=vol,col=market)) +
-  ggtitle("Market average volatility")
-
-
-dof<-fread("dof.csv")
-dof$Date<-as.Date(dof$Date,format="%Y-%m-%d")
-dof$PnL<-cumsum(dof$PnL)
-
-g3<-dof %>% 
-  ggplot() +
-  geom_line(aes(x=Date,y=PnL))
-
-
-
-
-@
-
-
-\tableofcontents
-
-\newpage
-\section{DOF performance}
-
-\begin{center}
-\Sexpr{make_plot(plot(g3),height="15cm",width="15cm")}
-\end{center}
-
-We wish to investigate the cause of infrequent, relatively large drawdowns.
-
-\newpage
-\section{Dataset}
-
-We use historical volatility surfaces from JPM's OptionMetrics database.
-
-\begin{tabular}{m{10cm}m{10cm}}
-\Sexpr{make_plot(plot(g1),height="10cm",width="10cm")}
-&
-\Sexpr{make_plot(plot(g2),height="10cm",width="10cm")}
-\end{tabular}
-
-
-<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
-
 #
 #
 #
@@ -426,32 +349,75 @@ make_backtest<-function(
   
 }
 
-compute_option_premium(
-      shedule[market=="spx"],
-      all_vol[market=="spx"],
-      strike_fun=function(close,vol,maturity)close*0.9,
-      model=EP
-)
 
-x<-make_backtest(
-  shedule=shedule[market=="spx"],
-  volsurf=all_vol[market=="spx"],
-  model=EP,
-  strike_fun=function(close,vol,maturity)close*0.9
-)
+
+g1<-shedule %>% 
+  ggplot() +
+  geom_line(aes(x=date,y=close,col=market)) +
+  ggtitle("Market closing prices")
+
+
+
+g2<-shedule %>% 
+  ggplot() +
+  geom_line(aes(x=date,y=vol,col=market)) +
+  ggtitle("Market average volatility")
+
+
+dof<-fread("dof.csv")
+dof$Date<-as.Date(dof$Date,format="%Y-%m-%d")
+dof$PnL<-cumsum(dof$PnL)
+
+g3<-dof %>% 
+  ggplot() +
+  geom_line(aes(x=Date,y=PnL))
+
+
+
+
+@
+
+
+\tableofcontents
+
+\newpage
+\section{DOF performance}
+
+\begin{center}
+\Sexpr{make_plot(plot(g3),height="15cm",width="15cm")}
+\end{center}
+
+We wish to investigate the cause of infrequent, relatively large drawdowns.
+
+\newpage
+\section{Dataset}
+
+We use historical volatility surfaces from JPM's OptionMetrics database.
+
+\begin{tabular}{m{10cm}m{10cm}}
+\Sexpr{make_plot(plot(g1),height="10cm",width="10cm")}
+&
+\Sexpr{make_plot(plot(g2),height="10cm",width="10cm")}
+\end{tabular}
+
+
+<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
+
+
+
 
 backtest2<-make_backtest(
   shedule=shedule[market=="spx"],
   volsurf=all_vol[market=="spx"],
   model=EP,
-  strike_fun=function(close,vol,maturity)close*0.9
+  strike_fun=function(close,vol,maturity)close*exp(qnorm(0.15,sd=vol*sqrt(maturity/365),lower.tail=TRUE))
 )
 
 backtest3<-make_backtest(
   shedule=shedule[market=="spx"],
   volsurf=all_vol[market=="spx"],
   model=EP,
-  strike_fun=function(close,vol,maturity)close*1.0
+  strike_fun=function(close,vol,maturity)close*exp(qnorm(0.5,sd=vol*sqrt(maturity/365),lower.tail=TRUE))
 )
 
 backtest<-data.table(

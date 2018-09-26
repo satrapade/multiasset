@@ -215,10 +215,16 @@ EP  <- function(S,X,t,r,v)
 compute_option_premium<-function(
   shedule,
   all_vol,
-  strike_fun=function(close)close,
+  strike_fun=function(close,vol,maturity)close,
   model=EC
 )merge(
-  x=shedule[date==start,.(market,strike=strike_fun(close),roll)],
+  x=shedule[date==start,.(
+    market,
+    strike_close=close,
+    strike_vol=vol,
+    strike=strike_fun(close,vol,maturity),
+    roll
+  )],
   y=shedule[,.(date,market,close,roll,maturity)],
   by.x=c("market","roll"),
   by.y=c("market","roll")
@@ -269,7 +275,15 @@ compute_option_premium<-function(
       vol_hh*(t_strike)*(t_mat)
     ))
     premium<-model(close, strike, maturity/365, 0,vol)
-    list(date=date,strike=strike,strike_maturity=maturity,strike_vol=vol,premium=premium)
+    list(
+      date=date,
+      strike_close=strike_close,
+      strike_vol=strike_vol,
+      strike=strike,
+      option_maturity=maturity,
+      option_vol=vol,
+      premium=premium
+    )
   }),
   keyby=market
 ]
@@ -280,7 +294,7 @@ system.time(backtest1<-merge(
   y=compute_option_premium(
     shedule,
     all_vol,
-    strike_fun=identity,
+    strike_fun=function(close,vol,maturity)close,
     model=EC
   )[,.(market,date,strike,strike_vol,premium)],
   by.x=c("date","market"),
@@ -292,7 +306,7 @@ system.time(backtest2<-merge(
   y=compute_option_premium(
     shedule[market=="spx"],
     all_vol[market=="spx"],
-    strike_fun=function(x)x*0.9,
+    strike_fun=function(close,vol,maturity)close*0.9,
     model=EP
   )[,.(market,date,strike,strike_vol,premium)],
   by.x=c("date","market"),
@@ -350,24 +364,66 @@ We use historical volatility surfaces from JPM's OptionMetrics database.
 
 
 <<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
-system.time(backtest2<-merge(
+
+make_backtest<-function(shedule,volsurf,model)
+{
+  options<-merge(
+    x=shedule,
+    y=compute_option_premium(
+      shedule,
+      all_vol,
+      strike_fun=function(close,vol,maturity)close*0.9,
+      model=model
+    )[,.(market,date,strike_close,strike,premium)],
+    by.x=c("date","market"),
+    by.y=c("date","market")
+  )
+  
+  backtest<-data.table(
+    market=options$market,
+    date=options$date,
+    start=options$start,
+    end=options$end,
+    maturity=options$maturity,
+    reval=options$premium/options$strike_close
+  )[,c(.SD,list(
+    cash=cumsum(ifelse(
+      start==date,
+      -reval,
+      0
+    )+ifelse(
+      maturity==1,
+      reval,
+      0
+    )),
+    holdings=ifelse(maturity==1,0,reval)
+  ))][,c(.SD,list(
+    pnl=cash+holdings
+  ))]
+
+  backtest  
+}
+
+x<-make_backtest(shedule[market=="spx"],all_vol[market=="spx"],EP)
+
+backtest2<-merge(
   x=shedule[market=="spx"],
   y=compute_option_premium(
     shedule[market=="spx"],
     all_vol[market=="spx"],
-    strike_fun=function(x)x*0.9,
+    strike_fun=function(close,vol,maturity)close*0.9,
     model=EP
-  )[,.(market,date,strike,strike_vol,premium)],
+  )[,.(market,date,strike_close,strike,option_maturity,option_vol,premium)],
   by.x=c("date","market"),
   by.y=c("date","market")
-))
+)
 
 system.time(backtest3<-merge(
   x=shedule[market=="spx"],
   y=compute_option_premium(
     shedule[market=="spx"],
     all_vol[market=="spx"],
-    strike_fun=function(x)x*1.0,
+    strike_fun=function(close,vol,maturity)close*1.0,
     model=EP
   )[,.(market,date,strike,strike_vol,premium)],
   by.x=c("date","market"),
@@ -380,8 +436,8 @@ backtest<-data.table(
   start=backtest2$start,
   end=backtest2$end,
   maturity=backtest2$maturity,
-  intrinsic=backtest2$strike-backtest3$strike,
-  reval=backtest2$premium-backtest3$premium
+  intrinsic=(backtest2$strike-backtest3$strike)/backtest3$strike,
+  reval=(backtest2$premium-backtest3$premium)/backtest3$strike
 )[,c(.SD,list(
   cash=cumsum(ifelse(
     start==date,
@@ -393,12 +449,26 @@ backtest<-data.table(
     0
   )),
   holdings=ifelse(maturity==1,0,reval)
+))][,c(.SD,list(
+  pnl=cash+holdings
 ))]
 
-g4<-backtest %>% 
+x<-melt(merge(x=backtest,y=dof,by.x="date",by.y="Date")[,.(
+  date,
+  backtest=cumsum(c(0,diff(pnl)))*mean(diff(PnL))/mean(diff(pnl)),
+  dof=cumsum(c(0,diff(PnL)))
+)],id.vars = "date",measure.vars = c("backtest","dof"))
+
+y<-apply(do.call(cbind,split(x$value,x$variable)),2,diff)
+
+cm<-cor(apply(y,2,roll_mean,14))
+
+g4<-x %>% 
   ggplot() +
-  geom_line(aes(x=date,y=cash+holdings))+
-  ggtitle("Quarterly rolling short 100-90 pct SPX put spreads")
+  geom_line(aes(x=date,y=value,col=variable),size=2,alpha=0.75)+
+  ggtitle("Quarterly rolling short 100-90 pct SPX put spreads vs DOF")
+
+
 
 @
 
@@ -408,7 +478,7 @@ g4<-backtest %>%
 
 
 \begin{center}
-\Sexpr{make_plot(plot(g4),height="15cm",width="15cm")}
+\Sexpr{make_plot(plot(g4),height="20cm",width="20cm")}
 \end{center}
 
 

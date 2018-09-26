@@ -365,20 +365,33 @@ We use historical volatility surfaces from JPM's OptionMetrics database.
 
 <<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
 
-make_backtest<-function(shedule,volsurf,model)
+#
+#
+#
+make_backtest<-function(
+  shedule,
+  volsurf,
+  model,
+  strike_fun=function(close,vol,maturity)close*0.9
+)
 {
+  
+  # roll strikes, 
+  # compute option premium
   options<-merge(
     x=shedule,
     y=compute_option_premium(
       shedule,
-      all_vol,
-      strike_fun=function(close,vol,maturity)close*0.9,
+      volsurf,
+      strike_fun=strike_fun,
       model=model
     )[,.(market,date,strike_close,strike,premium)],
     by.x=c("date","market"),
     by.y=c("date","market")
   )
   
+  # 
+  #
   backtest<-data.table(
     market=options$market,
     date=options$date,
@@ -397,61 +410,54 @@ make_backtest<-function(shedule,volsurf,model)
       0
     )),
     holdings=ifelse(maturity==1,0,reval)
-  ))][,c(.SD,list(
+  ))][,.(
+    market,
+    date,
+    start,
+    end,
+    maturity,
+    reval,
     pnl=cash+holdings
-  ))]
+  )]
 
-  backtest  
+  #
+  #
+  backtest 
+  
 }
 
-x<-make_backtest(shedule[market=="spx"],all_vol[market=="spx"],EP)
-
-backtest2<-merge(
-  x=shedule[market=="spx"],
-  y=compute_option_premium(
-    shedule[market=="spx"],
-    all_vol[market=="spx"],
-    strike_fun=function(close,vol,maturity)close*0.9,
-    model=EP
-  )[,.(market,date,strike_close,strike,option_maturity,option_vol,premium)],
-  by.x=c("date","market"),
-  by.y=c("date","market")
+compute_option_premium(
+      shedule[market=="spx"],
+      all_vol[market=="spx"],
+      strike_fun=function(close,vol,maturity)close*0.9,
+      model=EP
 )
 
-system.time(backtest3<-merge(
-  x=shedule[market=="spx"],
-  y=compute_option_premium(
-    shedule[market=="spx"],
-    all_vol[market=="spx"],
-    strike_fun=function(close,vol,maturity)close*1.0,
-    model=EP
-  )[,.(market,date,strike,strike_vol,premium)],
-  by.x=c("date","market"),
-  by.y=c("date","market")
-))
+x<-make_backtest(
+  shedule=shedule[market=="spx"],
+  volsurf=all_vol[market=="spx"],
+  model=EP,
+  strike_fun=function(close,vol,maturity)close*0.9
+)
+
+backtest2<-make_backtest(
+  shedule=shedule[market=="spx"],
+  volsurf=all_vol[market=="spx"],
+  model=EP,
+  strike_fun=function(close,vol,maturity)close*0.9
+)
+
+backtest3<-make_backtest(
+  shedule=shedule[market=="spx"],
+  volsurf=all_vol[market=="spx"],
+  model=EP,
+  strike_fun=function(close,vol,maturity)close*1.0
+)
 
 backtest<-data.table(
-  market=backtest3$market,
-  date=backtest2$date,
-  start=backtest2$start,
-  end=backtest2$end,
-  maturity=backtest2$maturity,
-  intrinsic=(backtest2$strike-backtest3$strike)/backtest3$strike,
-  reval=(backtest2$premium-backtest3$premium)/backtest3$strike
-)[,c(.SD,list(
-  cash=cumsum(ifelse(
-    start==date,
-    -reval,
-    0
-  )+ifelse(
-    maturity==1,
-    reval,
-    0
-  )),
-  holdings=ifelse(maturity==1,0,reval)
-))][,c(.SD,list(
-  pnl=cash+holdings
-))]
+  date=backtest3$date,
+  pnl=backtest2$pnl-backtest3$pnl
+)
 
 x<-melt(merge(x=backtest,y=dof,by.x="date",by.y="Date")[,.(
   date,

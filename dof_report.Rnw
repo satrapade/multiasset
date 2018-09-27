@@ -194,6 +194,7 @@ shedule<-make_roll_dates(
 
 # option models
 
+# european call
 EC <- function(S,X,t,r,v)
 {
   d1 <- (log(S/X)+(r+0.5*v^2)*t)/(v*sqrt(t))
@@ -202,12 +203,52 @@ EC <- function(S,X,t,r,v)
 }
 
 
+# european put
 EP  <- function(S,X,t,r,v)
 {
   d1 <- (log(S/X)+(r+0.5*v^2)*t)/(v*sqrt(t))
   d2 <- d1-v*sqrt(t)
   X*exp(-r*t)*pnorm(-d2)-S*pnorm(-d1)
 }
+
+
+# strike solvers
+
+# call premium to strike
+C2K<-function(K,C,F,v,t,n=3){
+  for(i in 1:n){
+    d1<-(log(F/K)+(0.5*v^2)*t)/(v*sqrt(t))
+    d2<-d1-v*sqrt(t)
+    Nd1<-pnorm(d1)
+    Nd2<-pnorm(d2)
+    K<-F*Nd1/Nd2-C/Nd2
+  }
+  K
+}
+
+# put premium to strike
+P2K<-function(K,P,F,v,t,n=3){
+  for(i in 1:n){
+    d1<-(log(F/K)+(0.5*v^2)*t)/(v*sqrt(t))
+    d2<-d1-v*sqrt(t)
+    Nmd1<-pnorm(-d1)
+    Nmd2<-pnorm(-d2)
+    K<-F*Nmd1/Nmd2+P/Nmd2
+  }
+  K
+}
+
+# delta to put strike 
+D2CK<-function(delta,close,vol,maturity){
+  close*exp(qnorm(1-delta,sd=vol*sqrt(maturity),lower.tail=TRUE))
+}
+
+# delta to call strike 
+D2PK<-function(delta,close,vol,maturity){
+  close*exp(qnorm(delta,sd=vol*sqrt(maturity),lower.tail=TRUE))
+}
+
+
 
 #
 #
@@ -349,7 +390,40 @@ make_backtest<-function(
   
 }
 
+strategy_weights<-function(s)do.call(rbind,mapply(function(x)x$weight,s,SIMPLIFY=FALSE))
 
+make_strategy<-function(
+  strategy,
+  shedule,
+  volsurf
+){
+ 
+  bk<-mapply(function(leg){
+    leg_res<-make_backtest(
+      shedule=shedule,
+      volsurf=volsurf,
+      model=leg$model,
+      strike_fun=leg$strike
+    )
+    leg_res
+  },strategy,SIMPLIFY=FALSE)
+  
+  w<-strategy_weights(strategy)
+  
+  strat_res<-do.call(cbind,mapply(function(leg)leg$pnl,bk,SIMPLIFY=FALSE))%*%w
+  
+  data.table(
+    date=bk[[1]]$date,
+    pnl=strat_res[,1]
+  )
+  
+}
+
+@
+
+
+
+<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
 
 g1<-shedule %>% 
   ggplot() +
@@ -392,9 +466,11 @@ We wish to investigate the cause of infrequent, relatively large drawdowns.
 \newpage
 \section{Dataset}
 
-We use historical volatility surfaces from JPM's OptionMetrics database.
+We use historical volatility surfaces from JPM's OptionMetrics database. Average volatility,
+closing prices by market shown below. 
 
 \begin{tabular}{m{10cm}m{10cm}}
+\hline
 \Sexpr{make_plot(plot(g1),height="10cm",width="10cm")}
 &
 \Sexpr{make_plot(plot(g2),height="10cm",width="10cm")}
@@ -403,39 +479,49 @@ We use historical volatility surfaces from JPM's OptionMetrics database.
 
 <<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
 
-
-
-
-backtest2<-make_backtest(
-  shedule=shedule[market=="spx"],
-  volsurf=all_vol[market=="spx"],
-  model=EP,
-  strike_fun=function(close,vol,maturity)close*exp(qnorm(0.15,sd=vol*sqrt(maturity/365),lower.tail=TRUE))
+strategy1<-list(
+  leg1=list(
+    model=EP,
+    strike=function(close,vol,maturity){
+      K_high<-D2PK(0.25,close,vol,maturity/365)
+      P<-EP(close,K_high,maturity/365,0,vol)
+      K_low<-P2K(K_high,P/3,close,vol,maturity/365)
+      K_low
+    },
+    weight=3
+  ),
+  leg2=list(
+    model=EP,
+    strike=function(close,vol,maturity){
+      K<-D2PK(0.25,close,vol,maturity/365)
+      K
+    },
+    weight=-1
+  )
 )
 
-backtest3<-make_backtest(
-  shedule=shedule[market=="spx"],
-  volsurf=all_vol[market=="spx"],
-  model=EP,
-  strike_fun=function(close,vol,maturity)close*exp(qnorm(0.5,sd=vol*sqrt(maturity/365),lower.tail=TRUE))
-)
 
-backtest<-data.table(
-  date=backtest3$date,
-  pnl=backtest2$pnl-backtest3$pnl
-)
-
-x<-melt(merge(x=backtest,y=dof,by.x="date",by.y="Date")[,.(
+g4<-melt(merge(
+  x=make_strategy(
+    strategy=list(
+      leg1=list(
+        model=EP,strike=function(close,vol,maturity)close*0.9,weight=1
+      ),
+      leg2=list(
+        model=EP,strike=function(close,vol,maturity)close*1,weight=-1
+      )
+    ),
+    shedule[market=="spx"],
+    all_vol[market=="spx"]
+  ),
+  y=dof,
+  by.x="date",
+  by.y="Date"
+)[,.(
   date,
   backtest=cumsum(c(0,diff(pnl)))*mean(diff(PnL))/mean(diff(pnl)),
   dof=cumsum(c(0,diff(PnL)))
-)],id.vars = "date",measure.vars = c("backtest","dof"))
-
-y<-apply(do.call(cbind,split(x$value,x$variable)),2,diff)
-
-cm<-cor(apply(y,2,roll_mean,14))
-
-g4<-x %>% 
+)],id.vars = "date",measure.vars = c("backtest","dof")) %>% 
   ggplot() +
   geom_line(aes(x=date,y=value,col=variable),size=2,alpha=0.75)+
   ggtitle("Quarterly rolling short 100-90 pct SPX put spreads vs DOF")
@@ -448,10 +534,53 @@ g4<-x %>%
 \section{Backtest}
 
 
-
 \begin{center}
 \Sexpr{make_plot(plot(g4),height="20cm",width="20cm")}
 \end{center}
+
+
+<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
+
+g5<-make_strategy(
+    strategy=list(
+      leg1=list(
+        model=EP,
+        strike=function(close,vol,maturity){
+          K_high<-D2CK(0.40,close,vol,maturity/365)
+          C<-EP(close,K_high,maturity/365,0,vol)
+          K_low<-P2K(K_high,C/2,close,vol,maturity/365)
+          K_low
+        },
+        weight=-2
+      ),
+      leg2=list(
+        model=EC,
+        strike=function(close,vol,maturity){
+          K<-D2CK(0.40,close,vol,maturity/365)
+          K
+        },
+        weight=1
+      )
+    ),
+    shedule[market=="spx"],
+    all_vol[market=="spx"]
+  ) %>% 
+ggplot() +
+geom_line(aes(x=date,y=pnl),size=2,alpha=0.75)+
+ggtitle("1 by 3 zero-cost putspread")
+
+
+
+@
+
+\newpage
+\section{SPX}
+
+
+\begin{center}
+\Sexpr{make_plot(plot(g5),height="20cm",width="20cm")}
+\end{center}
+
 
 
 

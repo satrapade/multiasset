@@ -542,32 +542,34 @@ g4<-melt(merge(
 <<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
 
 g5<-make_strategy(
-    strategy=list(
-      leg1=list(
-        model=EP,
-        strike=function(close,vol,maturity){
-          K_high<-D2CK(0.40,close,vol,maturity/365)
-          C<-EP(close,K_high,maturity/365,0,vol)
-          K_low<-P2K(K_high,C/2,close,vol,maturity/365)
-          K_low
-        },
-        weight=-2
-      ),
-      leg2=list(
+  strategy=list(
+      # long 40-delta call
+      long_call=list(
         model=EC,
         strike=function(close,vol,maturity){
           K<-D2CK(0.40,close,vol,maturity/365)
           K
         },
         weight=1
+      ),
+      # paid for by shorting twice the puts, of lower delta
+      short_put=list(
+        model=EP,
+        strike=function(close,vol,maturity){
+          K_high<-D2CK(0.40,close,vol,maturity/365)
+          C<-EC(close,K_high,maturity/365,0,vol)
+          K_low<-P2K(close,C/2,close,vol,maturity/365)
+          K_low
+        },
+        weight=-2
       )
-    ),
-    shedule[market=="spx"],
-    all_vol[market=="spx"]
-  ) %>% 
+  ),
+  shedule[market=="spx"],
+  all_vol[market=="spx"]
+) %>% 
 ggplot() +
 geom_line(aes(x=date,y=pnl),size=2,alpha=0.75)+
-ggtitle("1 by 3 zero-cost putspread")
+ggtitle("1 40-delta call  funded by sellling 2 puts")
 
 
 

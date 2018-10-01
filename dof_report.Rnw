@@ -44,15 +44,17 @@ require(akima)
 require(ggplot2)
 
 resampled_spx_vol<-"compressed_resampled_spx_vol.txt" %>% scan(character()) %>% decompress
-resampled_ndx_vol<-"compressed_resampled_ndx_vol.txt" %>% scan(character()) %>% decompress
-resampled_dax_vol<-"compressed_resampled_dax_vol.txt" %>% scan(character()) %>% decompress
 resampled_sx5e_vol<-"compressed_resampled_sx5e_vol.txt" %>% scan(character()) %>% decompress
+resampled_ftse_vol<-"compressed_resampled_ftse_vol.txt" %>% scan(character()) %>% decompress
+resampled_nky_vol<-"compressed_resampled_nky_vol.txt" %>% scan(character()) %>% decompress
+resampled_eem_vol<-"compressed_resampled_eem_vol.txt" %>% scan(character()) %>% decompress
 
 all_vol<-rbind( # data.table with all volatilities
   data.table(resampled_spx_vol,market="spx"),
-  data.table(resampled_ndx_vol,market="ndx"),
-  data.table(resampled_dax_vol,market="dax"),
-  data.table(resampled_sx5e_vol,market="sx5e")
+  data.table(resampled_sx5e_vol,market="sx5e"),
+  data.table(resampled_ftse_vol,market="ftse"),
+  data.table(resampled_nky_vol,market="nky"),
+  data.table(resampled_eem_vol,market="eem")
 )[,.(
     Date=as.Date(stri_sub(Date,1,10),format="%Y-%m-%d"),
     Strike=Strike,
@@ -419,34 +421,183 @@ make_strategy<-function(
   
 }
 
+dof<-fread("dof.csv")
+dof$Date<-as.Date(dof$Date,format="%Y-%m-%d")
+dof$PnL<-cumsum(dof$PnL)
+
 @
 
+<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
+#
+# strategies
+#
+
+########################################
+# short 90-100 putspread
+########################################
+strategy_90_100_PS<-list(
+  leg1=list(
+    model=EP,
+    strike=function(close,vol,maturity){ close*0.9 },
+    weight=(+1)
+  ),
+  leg2=list(
+    model=EP,
+    strike=function(close,vol,maturity){ close*1.0 },
+    weight=(-1)
+  )
+)
+
+########################################
+# short ATM straddle
+########################################
+strategy_SS<-list(
+  leg1=list(
+    model=EC,
+    strike=function(close,vol,maturity){ close*1.0 },
+    weight=(-1)
+  ),
+  leg2=list(
+    model=EP,
+    strike=function(close,vol,maturity){ close*1.0 },
+    weight=(-1)
+  )
+)
+
+########################################
+# CSC, 25-45 delta CS vs solve-P
+########################################
+strategy_CSC<-list(
+  leg1=list(
+    model=EC,
+    strike=function(close,vol,maturity){ 
+      call_K_low<-K<-D2CK(0.45,close,vol,maturity/365)
+      call_K_low
+    },
+    weight=(+1)
+  ),
+  leg2=list(
+    model=EC,
+    strike=function(close,vol,maturity){ 
+      call_K_hi<-K<-D2CK(0.25,close,vol,maturity/365)
+      call_K_hi
+    },
+    weight=(-1)
+  ),
+  leg3=list(
+    model=EP,
+    strike=function(close,vol,maturity){ 
+      call_K_low<-K<-D2CK(0.45,close,vol,maturity/365)
+      call_K_hi<-K<-D2CK(0.25,close,vol,maturity/365)
+      CS_premium<-EC(close,call_K_low,maturity/365,0,vol)-EC(close,call_K_hi,maturity/365,0,vol)
+      put_K<-P2K(close,CS_premium,close,vol,maturity/365)
+      put_K
+    },
+    weight=(-1)
+  )
+)
+
+########################################
+# PSC, 25-45 delta PS vs solve-C
+########################################
+strategy_PSC<-list(
+  leg1=list(
+    model=EP,
+    strike=function(close,vol,maturity){ 
+      put_K_hi<-D2PK(0.45,close,vol,maturity/365)
+      put_K_hi
+    },
+    weight=(+1)
+  ),
+  leg2=list(
+    model=EP,
+    strike=function(close,vol,maturity){ 
+      put_K_low<-D2PK(0.25,close,vol,maturity/365)
+      put_K_low
+    },
+    weight=(-1)
+  ),
+  leg3=list(
+    model=EC,
+    strike=function(close,vol,maturity){ 
+      put_K_hi<-D2PK(0.45,close,vol,maturity/365)
+      put_K_low<-D2PK(0.25,close,vol,maturity/365)
+      PS_premium<-EP(close,put_K_hi,maturity/365,0,vol)-EP(close,put_K_low,maturity/365,0,vol)
+      call_K<-C2K(close,PS_premium,close,vol,maturity/365)
+      call_K
+    },
+    weight=(-1)
+  )
+)
+
+########################################
+# PR, 45 delta P vs solve-P @ half the
+# premium at twice the size
+########################################
+strategy_PR<-list(
+  leg1=list(
+    model=EP,
+    strike=function(close,vol,maturity){ 
+      put_K_hi<-D2PK(0.45,close,vol,maturity/365)
+      put_K_hi
+    },
+    weight=(+1)
+  ),
+  leg2=list(
+    model=EP,
+    strike=function(close,vol,maturity){ 
+      put_K_hi<-D2PK(0.45,close,vol,maturity/365)
+      P_premium<-EP(close,put_K_hi,maturity/365,0,vol)
+      put_K_low<-P2K(close,P_premium/2,close,vol,maturity/365)
+    },
+    weight=(-2)
+  )
+)
+
+########################################
+# CR, 45 delta C vs solve-C @ half the
+# premium at twice the size
+########################################
+strategy_CR<-list(
+  leg1=list(
+    model=EC,
+    strike=function(close,vol,maturity){ 
+      call_K_low<-D2CK(0.45,close,vol,maturity/365)
+      call_K_low
+    },
+    weight=(+1)
+  ),
+  leg2=list(
+    model=EC,
+    strike=function(close,vol,maturity){ 
+      call_K_low<-D2CK(0.45,close,vol,maturity/365)
+      C_premium<-EC(close,call_K_low,maturity/365,0,vol)
+      call_K_high<-C2K(close,C_premium/2,close,vol,maturity/365)
+    },
+    weight=(-2)
+  )
+)
+
+
+@
 
 
 <<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
 
-g1<-shedule %>% 
+g_close<-shedule %>% 
   ggplot() +
   geom_line(aes(x=date,y=close,col=market)) +
   ggtitle("Market closing prices")
 
-
-
-g2<-shedule %>% 
+g_vol<-shedule %>% 
   ggplot() +
   geom_line(aes(x=date,y=vol,col=market)) +
   ggtitle("Market average volatility")
 
 
-dof<-fread("dof.csv")
-dof$Date<-as.Date(dof$Date,format="%Y-%m-%d")
-dof$PnL<-cumsum(dof$PnL)
-
-g3<-dof %>% 
+g_dof<-dof %>% 
   ggplot() +
   geom_line(aes(x=Date,y=PnL))
-
-
 
 
 @
@@ -458,7 +609,7 @@ g3<-dof %>%
 \section{DOF performance}
 
 \begin{center}
-\Sexpr{make_plot(plot(g3),height="15cm",width="15cm")}
+\Sexpr{make_plot(plot(g_dof),height="15cm",width="15cm")}
 \end{center}
 
 We wish to investigate the cause of infrequent, relatively large drawdowns.
@@ -471,49 +622,17 @@ closing prices by market shown below.
 
 \begin{tabular}{m{10cm}m{10cm}}
 \hline
-\Sexpr{make_plot(plot(g1),height="10cm",width="10cm")}
+\Sexpr{make_plot(plot(g_close),height="10cm",width="10cm")}
 &
-\Sexpr{make_plot(plot(g2),height="10cm",width="10cm")}
+\Sexpr{make_plot(plot(g_vol),height="10cm",width="10cm")}
 \end{tabular}
 
 
 <<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
 
-strategy1<-list(
-  leg1=list(
-    model=EP,
-    strike=function(close,vol,maturity){
-      K_high<-D2PK(0.25,close,vol,maturity/365)
-      P<-EP(close,K_high,maturity/365,0,vol)
-      K_low<-P2K(K_high,P/3,close,vol,maturity/365)
-      K_low
-    },
-    weight=3
-  ),
-  leg2=list(
-    model=EP,
-    strike=function(close,vol,maturity){
-      K<-D2PK(0.25,close,vol,maturity/365)
-      K
-    },
-    weight=-1
-  )
-)
 
-
-g4<-melt(merge(
-  x=make_strategy(
-    strategy=list(
-      leg1=list(
-        model=EP,strike=function(close,vol,maturity)close*0.9,weight=1
-      ),
-      leg2=list(
-        model=EP,strike=function(close,vol,maturity)close*1,weight=-1
-      )
-    ),
-    shedule[market=="spx"],
-    all_vol[market=="spx"]
-  ),
+g_spx_90_100_ps<-melt(merge(
+  x=make_strategy(strategy=strategy_90_100_PS,shedule[market=="spx"],all_vol[market=="spx"]),
   y=dof,
   by.x="date",
   by.y="Date"
@@ -531,60 +650,164 @@ g4<-melt(merge(
 @
 
 \newpage
-\section{Backtest}
+\section{SPX Q90-100 PS vs DOF performance}
 
 
 \begin{center}
-\Sexpr{make_plot(plot(g4),height="20cm",width="20cm")}
+\Sexpr{make_plot(plot(g_spx_90_100_ps),height="20cm",width="20cm")}
 \end{center}
 
 
 <<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
 
-g5<-make_strategy(
-  strategy=list(
-      # long 40-delta call
-      long_call=list(
-        model=EC,
-        strike=function(close,vol,maturity){
-          K<-D2CK(0.40,close,vol,maturity/365)
-          K
-        },
-        weight=1
-      ),
-      # paid for by shorting twice the puts, of lower delta
-      short_put=list(
-        model=EP,
-        strike=function(close,vol,maturity){
-          K_high<-D2CK(0.40,close,vol,maturity/365)
-          C<-EC(close,K_high,maturity/365,0,vol)
-          K_low<-P2K(close,C/2,close,vol,maturity/365)
-          K_low
-        },
-        weight=-2
-      )
-  ),
-  shedule[market=="spx"],
-  all_vol[market=="spx"]
-) %>% 
-ggplot() +
-geom_line(aes(x=date,y=pnl),size=2,alpha=0.75)+
-ggtitle("1 40-delta call  funded by sellling 2 puts")
+bktst_SPX_CSC<-make_strategy(strategy=strategy_CSC,shedule[market=="spx"],all_vol[market=="spx"])
+bktst_SPX_PSC<-make_strategy(strategy=strategy_PSC,shedule[market=="spx"],all_vol[market=="spx"])
+bktst_SPX_SS<-make_strategy(strategy=strategy_SS,shedule[market=="spx"],all_vol[market=="spx"])
+bktst_SPX_CR<-make_strategy(strategy=strategy_CR,shedule[market=="spx"],all_vol[market=="spx"])
+bktst_SPX_PR<-make_strategy(strategy=strategy_PR,shedule[market=="spx"],all_vol[market=="spx"])
 
+g_spx_csc<- bktst_SPX_CSC %>% ggplot() + geom_line(aes(x=date,y=pnl),size=2,alpha=0.75) + ggtitle("SPX CSC")
+g_spx_psc<- bktst_SPX_PSC %>% ggplot() + geom_line(aes(x=date,y=pnl),size=2,alpha=0.75) + ggtitle("SPX PSC")
+g_spx_ss<- bktst_SPX_SS %>% ggplot() + geom_line(aes(x=date,y=pnl),size=2,alpha=0.75) + ggtitle("SPX SS")
+g_spx_cr<- bktst_SPX_CR %>% ggplot() + geom_line(aes(x=date,y=pnl),size=2,alpha=0.75) + ggtitle("SPX CR")
+g_spx_pr<- bktst_SPX_PR %>% ggplot() + geom_line(aes(x=date,y=pnl),size=2,alpha=0.75) + ggtitle("SPX PR")
 
 
 @
 
 \newpage
-\section{SPX}
+\section{Strategies for SPX}
 
+\subsection{CSC}
 
 \begin{center}
-\Sexpr{make_plot(plot(g5),height="20cm",width="20cm")}
+\Sexpr{make_plot(plot(g_spx_csc),height="20cm",width="20cm")}
+\end{center}
+
+\subsection{PSC}
+
+\begin{center}
+\Sexpr{make_plot(plot(g_spx_psc),height="20cm",width="20cm")}
+\end{center}
+
+\subsection{SS}
+
+\begin{center}
+\Sexpr{make_plot(plot(g_spx_ss),height="20cm",width="20cm")}
+\end{center}
+
+\subsection{CR}
+
+\begin{center}
+\Sexpr{make_plot(plot(g_spx_cr),height="20cm",width="20cm")}
+\end{center}
+
+\subsection{PR}
+
+\begin{center}
+\Sexpr{make_plot(plot(g_spx_pr),height="20cm",width="20cm")}
 \end{center}
 
 
+<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
 
+bktst_SX5E_CSC<-make_strategy(strategy=strategy_CSC,shedule[market=="sx5e"],all_vol[market=="sx5e"])
+bktst_SX5E_PSC<-make_strategy(strategy=strategy_PSC,shedule[market=="sx5e"],all_vol[market=="sx5e"])
+bktst_SX5E_SS<-make_strategy(strategy=strategy_SS,shedule[market=="sx5e"],all_vol[market=="sx5e"])
+
+g_sx5e_csc<- bktst_SX5E_CSC %>% ggplot() + geom_line(aes(x=date,y=pnl),size=2,alpha=0.75) + ggtitle("SX5E CSC")
+g_sx5e_psc<- bktst_SX5E_PSC %>% ggplot() + geom_line(aes(x=date,y=pnl),size=2,alpha=0.75) + ggtitle("SX5E PSC")
+g_sx5e_ss<- bktst_SX5E_SS %>% ggplot() + geom_line(aes(x=date,y=pnl),size=2,alpha=0.75) + ggtitle("SX5E SS")
+
+@
+
+\newpage
+\section{Strategies for SX5E}
+
+\subsection{CSC}
+
+\begin{center}
+\Sexpr{make_plot(plot(g_sx5e_csc),height="20cm",width="20cm")}
+\end{center}
+
+\subsection{PSC}
+
+\begin{center}
+\Sexpr{make_plot(plot(g_sx5e_psc),height="20cm",width="20cm")}
+\end{center}
+
+\subsection{SS}
+
+\begin{center}
+\Sexpr{make_plot(plot(g_sx5e_ss),height="20cm",width="20cm")}
+\end{center}
+
+<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
+
+bktst_FTSE_CSC<-make_strategy(strategy=strategy_CSC,shedule[market=="ftse"],all_vol[market=="ftse"])
+bktst_FTSE_PSC<-make_strategy(strategy=strategy_PSC,shedule[market=="ftse"],all_vol[market=="ftse"])
+bktst_FTSE_SS<-make_strategy(strategy=strategy_SS,shedule[market=="ftse"],all_vol[market=="ftse"])
+
+g_ftse_csc<- bktst_FTSE_CSC %>% ggplot() + geom_line(aes(x=date,y=pnl),size=2,alpha=0.75) + ggtitle("FTSE CSC")
+g_ftse_psc<- bktst_FTSE_PSC %>% ggplot() + geom_line(aes(x=date,y=pnl),size=2,alpha=0.75) + ggtitle("FTSE PSC")
+g_ftse_ss<- bktst_FTSE_SS %>% ggplot() + geom_line(aes(x=date,y=pnl),size=2,alpha=0.75) + ggtitle("FTSE SS")
+
+
+@
+
+\newpage
+\section{Strategies for FTSE}
+
+\subsection{CSC}
+
+\begin{center}
+\Sexpr{make_plot(plot(g_ftse_csc),height="20cm",width="20cm")}
+\end{center}
+
+\subsection{PSC}
+
+\begin{center}
+\Sexpr{make_plot(plot(g_ftse_psc),height="20cm",width="20cm")}
+\end{center}
+
+\subsection{SS}
+
+\begin{center}
+\Sexpr{make_plot(plot(g_ftse_ss),height="20cm",width="20cm")}
+\end{center}
+
+<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
+
+bktst_NKY_CSC<-make_strategy(strategy=strategy_CSC,shedule[market=="nky"],all_vol[market=="nky"])
+bktst_NKY_PSC<-make_strategy(strategy=strategy_PSC,shedule[market=="nky"],all_vol[market=="nky"])
+bktst_NKY_SS<-make_strategy(strategy=strategy_SS,shedule[market=="nky"],all_vol[market=="nky"])
+
+g_nky_csc<- bktst_NKY_CSC %>% ggplot() + geom_line(aes(x=date,y=pnl),size=2,alpha=0.75) + ggtitle("NKY CSC")
+g_nky_psc<- bktst_NKY_PSC %>% ggplot() + geom_line(aes(x=date,y=pnl),size=2,alpha=0.75) + ggtitle("NKY PSC")
+g_nky_ss<- bktst_NKY_SS %>% ggplot() + geom_line(aes(x=date,y=pnl),size=2,alpha=0.75) + ggtitle("NKY SS")
+
+@
+
+\newpage
+\section{Strategies for NKY}
+
+\subsection{CSC}
+
+\begin{center}
+\Sexpr{make_plot(plot(g_nky_csc),height="20cm",width="20cm")}
+\end{center}
+
+\subsection{PSC}
+
+\begin{center}
+\Sexpr{make_plot(plot(g_nky_psc),height="20cm",width="20cm")}
+\end{center}
+
+\subsection{SS}
+
+\begin{center}
+\Sexpr{make_plot(plot(g_nky_ss),height="20cm",width="20cm")}
+\end{center}
 
 \end{document}
 

@@ -28,6 +28,15 @@
 source("https://raw.githubusercontent.com/satrapade/latex_utils/master/latex_helpers_v2.R")
 
 source("https://raw.githubusercontent.com/satrapade/utility/master/utility_functions.R")
+source("https://raw.githubusercontent.com/satrapade/utility/master/nn_cast.R")
+
+temp_files<-list.files(
+    path="figure",
+    pattern="pdf$",
+    recursive = FALSE,
+    full.names = TRUE
+)
+file.remove(temp_files)
 
 require(data.table)
 require(scales)
@@ -549,6 +558,7 @@ strategy_PR<-list(
       put_K_hi<-D2PK(0.45,close,vol,maturity/365)
       P_premium<-EP(close,put_K_hi,maturity/365,0,vol)
       put_K_low<-P2K(close,P_premium/2,close,vol,maturity/365)
+      put_K_low
     },
     weight=(-2)
   )
@@ -573,37 +583,160 @@ strategy_CR<-list(
       call_K_low<-D2CK(0.45,close,vol,maturity/365)
       C_premium<-EC(close,call_K_low,maturity/365,0,vol)
       call_K_high<-C2K(close,C_premium/2,close,vol,maturity/365)
+      call_K_high
     },
     weight=(-2)
   )
 )
 
+########################################
+# ZCRR, 25 delta C vs solve-P 
+########################################
+strategy_ZCRR<-list(
+  leg1=list(
+    model=EC,
+    strike=function(close,vol,maturity){ 
+      call_K<-D2CK(0.25,close,vol,maturity/365)
+      call_K
+    },
+    weight=(+1)
+  ),
+  leg2=list(
+    model=EP,
+    strike=function(close,vol,maturity){ 
+      call_K<-D2CK(0.25,close,vol,maturity/365)
+      C_premium<-EC(close,call_K,maturity/365,0,vol)
+      put_K<-P2K(close,C_premium,close,vol,maturity/365)
+      put_K
+    },
+    weight=(-1)
+  )
+)
+
+
+#
+# list of strategies
+#
+strategies<-list(
+  SS=strategy_SS,
+  CSC=strategy_CSC,
+  PSC=strategy_PSC,
+  CR=strategy_CR,
+  PR=strategy_PR,
+  ZCRR=strategy_ZCRR
+)
+
+#
+# list of markets
+#
+markets<-c(
+  "spx",
+  "sx5e",
+  "ftse",
+  "nky"
+)
+
+
+make_backtest_plot<-function(
+  backtest,
+  the_market,
+  the_strategy,
+  height="4cm",
+  width="4cm"
+)
+{
+
+  backtest_plot<- backtest %>% 
+    ggplot() + 
+    geom_line(aes(x=date,y=pnl),size=2,alpha=0.75)+ 
+    ggtitle(paste0(toupper(the_market)," : ",the_strategy))+
+    scale_x_date(breaks = pretty_breaks(10)) +
+    theme(plot.title = element_text(size=28))
+  
+  plot_latex<-make_plot(
+    plot(backtest_plot),
+    height=height,
+    width=width,
+    envir=environment()
+  )
+  
+  plot_latex
+  
+}
+
+
+all_backtests<-data.table(
+  strategy=rep(names(strategies),times=length(markets)),
+  market=rep(markets,each=length(strategies))
+)[,c(.SD,list(
+  backtest=mapply(function(the_market,the_strategy){
+    make_strategy(
+      strategy=strategies[[the_strategy]],
+      shedule[market==the_market],
+      all_vol[market==the_market]
+    )
+  },market,strategy,SIMPLIFY=FALSE)
+))][,c(.SD,list(
+  plot=mapply(make_backtest_plot,backtest=backtest,the_market=market,the_strategy=strategy)
+))]
+
+NNcast<-function(
+  data,
+  i_name="date",
+  j_name="id",
+  v_name="value",
+  fun=sum,
+  scrub_fun=function(x)scrub(x,default=0),
+  scrub=function(x, default = 0){
+    if(length(x) == 0) return(default)
+    x[which(!is.finite(x))] <- default
+    return(x)
+  }
+){
+  i_expr<-parse(text=as.character(i_name))
+  j_expr<-parse(text=as.character(j_name))
+  v_expr<-parse(text=as.character(v_name))
+  i<-as.character(eval(i_expr,envir=data))
+  j<-as.character(eval(j_expr,envir=data))
+  x<-eval(v_expr,envir=data)
+  df<-data.table(i=i,j=j,x=x)[,.(x=fun(x)),keyby="i,j"]
+  is<-sort(unique(df$i))
+  js<-sort(unique(df$j))
+  res<-matrix(
+    do.call(class(x),list(1)),
+    nrow=length(is),
+    ncol=length(js),
+    dimnames = list(is,js)
+  )
+  i<-match(df$i,rownames(res))
+  j<-match(df$j,colnames(res))
+  res[cbind(i,j)[!is.na(df$x),]]<-df$x[!is.na(df$x)]
+  scrub_fun(res)
+}
+
+
+backtest_plot_matrix<-NNcast(
+  all_backtests,
+  i_name="strategy",
+  j_name="market",
+  v_name="plot",
+  fun=identity,
+  scrub_fun = identity
+)
 
 @
 
-
-<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
-
-g_close<-shedule %>% 
-  ggplot() +
-  geom_line(aes(x=date,y=close,col=market)) +
-  ggtitle("Market closing prices")
-
-g_vol<-shedule %>% 
-  ggplot() +
-  geom_line(aes(x=date,y=vol,col=market)) +
-  ggtitle("Market average volatility")
-
-
-g_dof<-dof %>% 
-  ggplot() +
-  geom_line(aes(x=Date,y=PnL))
-
-
-@
 
 
 \tableofcontents
+
+
+
+<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
+g_dof<-dof %>% 
+  ggplot() +
+  geom_line(aes(x=Date,y=PnL))
+@
 
 \newpage
 \section{DOF performance}
@@ -615,24 +748,176 @@ g_dof<-dof %>%
 We wish to investigate the cause of infrequent, relatively large drawdowns.
 
 \newpage
-\section{Dataset}
+\section{Strategy, market backtests}
 
-We use historical volatility surfaces from JPM's OptionMetrics database. Average volatility,
-closing prices by market shown below. 
-
-\begin{tabular}{m{10cm}m{10cm}}
-\hline
-\Sexpr{make_plot(plot(g_close),height="10cm",width="10cm")}
-&
-\Sexpr{make_plot(plot(g_vol),height="10cm",width="10cm")}
-\end{tabular}
-
+\begin{center}
+\Sexpr{matrix2tabular(backtest_plot_matrix)}
+\end{center}
 
 <<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
 
+equal_backtest<-data.table(
+  date=all_backtests$backtest[[1]]$date,
+  pnl=rowMeans(do.call(cbind,mapply(function(b)b$pnl,all_backtests$backtest,SIMPLIFY=FALSE)))
+)
+
+g_equal<-melt(merge(
+  x=equal_backtest,
+  y=dof,
+  by.x="date",
+  by.y="Date"
+)[,.(
+  date,
+  backtest=cumsum(c(0,diff(pnl)))*mean(diff(PnL))/mean(diff(pnl)),
+  dof=cumsum(c(0,diff(PnL)))
+)],id.vars = "date",measure.vars = c("backtest","dof")) %>% 
+  ggplot() +
+  geom_line(aes(x=date,y=value,col=variable),size=2,alpha=0.75)+
+  ggtitle("Equal-weight all strategies, markets vs DOF")
+
+@
+\newpage
+\section{All strategies, markets, equal weight}
+
+\begin{center}
+\Sexpr{make_plot(plot(g_equal),height="20cm",width="20cm")}
+\end{center}
+
+\newpage
+\section{Portfolio 1 : Theoretical weights  }
+
+<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
+
+theoretical_weights<-c(
+  CSC=0.33,
+  PSC=0.0,
+  ZCRR=0.0,
+  PR=0.33,
+  CR=0.0,
+  SS=0.33
+)
+
+backtest_matrix<-local({
+    res<-do.call(cbind,mapply(function(b)b$pnl,all_backtests$backtest,SIMPLIFY=FALSE))
+    colnames(res)<-paste0(all_backtests$market,"|",all_backtests$strategy)
+    rownames(res)<-as.character(all_backtests$backtest[[1]]$date,format="%Y-%m-%d")
+    res
+  })
+
+theoretical_backtest<-data.table(
+  date=all_backtests$backtest[[1]]$date,
+  pnl=local({
+    drop(backtest_matrix %*% cbind(theoretical_weights[all_backtests$strategy] %>% {./sum(.)}))
+  })
+)
+
+g_theoretical<-melt(merge(
+  x=theoretical_backtest,
+  y=dof,
+  by.x="date",
+  by.y="Date"
+)[,.(
+  date,
+  backtest=cumsum(c(0,diff(pnl)))*mean(diff(PnL))/mean(diff(pnl)),
+  dof=cumsum(c(0,diff(PnL)))
+)],id.vars = "date",measure.vars = c("backtest","dof")) %>% 
+  ggplot() +
+  geom_line(aes(x=date,y=value,col=variable),size=2,alpha=0.75)+
+  ggtitle("Theoretical-weight all strategies, markets vs DOF")
+
+@
+
+
+\begin{center}
+\begin{tabular}{l l}
+\hline
+\rowcolor{gray!20}
+\multicolumn{2}{c}{Portfolio composition} \\
+Zero Cost Call Spread Collars & 33 \% \\
+Zero Cost Put Spread Collars & 0 \% \\
+Zero Cost Risk Reversals & 0 \% \\
+Zero Cost Put Spread Ratios & 33 \% \\
+Short Straddles & 33 \% \\
+\end{tabular}
+\end{center}
+
+\begin{center}
+\Sexpr{make_plot(plot(g_theoretical),height="20cm",width="20cm")}
+\end{center}
+
+
+\newpage
+\section{Portfolio 2 : Weights matching average DOF exposure }
+
+<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
+
+historical_weights<-c(
+  CSC=0.43,
+  PSC=0.19,
+  ZCRR=0.07,
+  PR=0.15,
+  CR=0.0,
+  SS=0.16
+)
+
+backtest_matrix<-local({
+    res<-do.call(cbind,mapply(function(b)b$pnl,all_backtests$backtest,SIMPLIFY=FALSE))
+    colnames(res)<-paste0(all_backtests$market,"|",all_backtests$strategy)
+    rownames(res)<-as.character(all_backtests$backtest[[1]]$date,format="%Y-%m-%d")
+    res
+  })
+
+historical_backtest<-data.table(
+  date=all_backtests$backtest[[1]]$date,
+  pnl=local({
+    drop(backtest_matrix %*% cbind(historical_weights[all_backtests$strategy] %>% {./sum(.)}))
+  })
+)
+
+g_historical<-melt(merge(
+  x=historical_backtest,
+  y=dof,
+  by.x="date",
+  by.y="Date"
+)[,.(
+  date,
+  backtest=cumsum(c(0,diff(pnl)))*mean(diff(PnL))/mean(diff(pnl)),
+  dof=cumsum(c(0,diff(PnL)))
+)],id.vars = "date",measure.vars = c("backtest","dof")) %>% 
+  ggplot() +
+  geom_line(aes(x=date,y=value,col=variable),size=2,alpha=0.75)+
+  ggtitle("Historical-weight all strategies, markets vs DOF")
+
+@
+
+
+\begin{center}
+\begin{tabular}{l l}
+\hline
+\rowcolor{gray!20}
+\multicolumn{2}{c}{Portfolio composition} \\
+Zero Cost Call Spread Collars & 43 \% \\
+Zero Cost Put Spread Collars & 19 \% \\
+Zero Cost Risk Reversals & 7\% \\
+Zero Cost Put Spread Ratios & 15 \% \\
+Short Straddles & 16 \% \\
+\end{tabular}
+\end{center}
+
+\begin{center}
+\Sexpr{make_plot(plot(g_historical),height="20cm",width="20cm")}
+\end{center}
+
+
+\newpage
+\section{SPX Q90-100 PS vs DOF performance}
+
+<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
+
+spx_90_100_ps_backtest<-make_strategy(strategy=strategy_90_100_PS,shedule[market=="spx"],all_vol[market=="spx"])
 
 g_spx_90_100_ps<-melt(merge(
-  x=make_strategy(strategy=strategy_90_100_PS,shedule[market=="spx"],all_vol[market=="spx"]),
+  x=spx_90_100_ps_backtest,
   y=dof,
   by.x="date",
   by.y="Date"
@@ -649,165 +934,66 @@ g_spx_90_100_ps<-melt(merge(
 
 @
 
-\newpage
-\section{SPX Q90-100 PS vs DOF performance}
-
 
 \begin{center}
 \Sexpr{make_plot(plot(g_spx_90_100_ps),height="20cm",width="20cm")}
 \end{center}
 
+\newpage
+\section{All backtests}
 
 <<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
 
-bktst_SPX_CSC<-make_strategy(strategy=strategy_CSC,shedule[market=="spx"],all_vol[market=="spx"])
-bktst_SPX_PSC<-make_strategy(strategy=strategy_PSC,shedule[market=="spx"],all_vol[market=="spx"])
-bktst_SPX_SS<-make_strategy(strategy=strategy_SS,shedule[market=="spx"],all_vol[market=="spx"])
-bktst_SPX_CR<-make_strategy(strategy=strategy_CR,shedule[market=="spx"],all_vol[market=="spx"])
-bktst_SPX_PR<-make_strategy(strategy=strategy_PR,shedule[market=="spx"],all_vol[market=="spx"])
+combined_backtest<-rbind(
+  data.table(equal_backtest,weight="equal"),
+  data.table(theoretical_backtest,weight="theoretical"),
+  data.table(historical_backtest,weight="historical"),
+  data.table(spx_90_100_ps_backtest,weight="spx90-100ps")
+)
+g_combined <- combined_backtest %>% 
+  ggplot() +
+  geom_line(aes(x=date,y=pnl,col=weight),size=2,alpha=0.75)+
+  ggtitle("All backtests")
 
-g_spx_csc<- bktst_SPX_CSC %>% ggplot() + geom_line(aes(x=date,y=pnl),size=2,alpha=0.75) + ggtitle("SPX CSC")
-g_spx_psc<- bktst_SPX_PSC %>% ggplot() + geom_line(aes(x=date,y=pnl),size=2,alpha=0.75) + ggtitle("SPX PSC")
-g_spx_ss<- bktst_SPX_SS %>% ggplot() + geom_line(aes(x=date,y=pnl),size=2,alpha=0.75) + ggtitle("SPX SS")
-g_spx_cr<- bktst_SPX_CR %>% ggplot() + geom_line(aes(x=date,y=pnl),size=2,alpha=0.75) + ggtitle("SPX CR")
-g_spx_pr<- bktst_SPX_PR %>% ggplot() + geom_line(aes(x=date,y=pnl),size=2,alpha=0.75) + ggtitle("SPX PR")
+@
+
+
+\begin{center}
+\Sexpr{make_plot(plot(g_combined),height="20cm",width="20cm")}
+\end{center}
+
+
+\newpage
+\section{Dataset}
+
+<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
+
+g_close<-shedule %>% 
+  ggplot() +
+  geom_line(aes(x=date,y=close,col=market)) +
+  ggtitle("Market closing prices")
+
+g_vol<-shedule %>% 
+  ggplot() +
+  geom_line(aes(x=date,y=vol,col=market)) +
+  ggtitle("Market average volatility")
 
 
 @
 
-\newpage
-\section{Strategies for SPX}
 
-\subsection{CSC}
+We use historical volatility surfaces from JPM's OptionMetrics database. Average volatility,
+closing prices by market shown below. 
 
-\begin{center}
-\Sexpr{make_plot(plot(g_spx_csc),height="20cm",width="20cm")}
-\end{center}
+\vskip 5mm
 
-\subsection{PSC}
+\begin{tabular}{m{10cm}m{10cm}}
+\hline
+\Sexpr{make_plot(plot(g_close),height="10cm",width="10cm")}
+&
+\Sexpr{make_plot(plot(g_vol),height="10cm",width="10cm")}
+\end{tabular}
 
-\begin{center}
-\Sexpr{make_plot(plot(g_spx_psc),height="20cm",width="20cm")}
-\end{center}
-
-\subsection{SS}
-
-\begin{center}
-\Sexpr{make_plot(plot(g_spx_ss),height="20cm",width="20cm")}
-\end{center}
-
-\subsection{CR}
-
-\begin{center}
-\Sexpr{make_plot(plot(g_spx_cr),height="20cm",width="20cm")}
-\end{center}
-
-\subsection{PR}
-
-\begin{center}
-\Sexpr{make_plot(plot(g_spx_pr),height="20cm",width="20cm")}
-\end{center}
-
-
-<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
-
-bktst_SX5E_CSC<-make_strategy(strategy=strategy_CSC,shedule[market=="sx5e"],all_vol[market=="sx5e"])
-bktst_SX5E_PSC<-make_strategy(strategy=strategy_PSC,shedule[market=="sx5e"],all_vol[market=="sx5e"])
-bktst_SX5E_SS<-make_strategy(strategy=strategy_SS,shedule[market=="sx5e"],all_vol[market=="sx5e"])
-
-g_sx5e_csc<- bktst_SX5E_CSC %>% ggplot() + geom_line(aes(x=date,y=pnl),size=2,alpha=0.75) + ggtitle("SX5E CSC")
-g_sx5e_psc<- bktst_SX5E_PSC %>% ggplot() + geom_line(aes(x=date,y=pnl),size=2,alpha=0.75) + ggtitle("SX5E PSC")
-g_sx5e_ss<- bktst_SX5E_SS %>% ggplot() + geom_line(aes(x=date,y=pnl),size=2,alpha=0.75) + ggtitle("SX5E SS")
-
-@
-
-\newpage
-\section{Strategies for SX5E}
-
-\subsection{CSC}
-
-\begin{center}
-\Sexpr{make_plot(plot(g_sx5e_csc),height="20cm",width="20cm")}
-\end{center}
-
-\subsection{PSC}
-
-\begin{center}
-\Sexpr{make_plot(plot(g_sx5e_psc),height="20cm",width="20cm")}
-\end{center}
-
-\subsection{SS}
-
-\begin{center}
-\Sexpr{make_plot(plot(g_sx5e_ss),height="20cm",width="20cm")}
-\end{center}
-
-<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
-
-bktst_FTSE_CSC<-make_strategy(strategy=strategy_CSC,shedule[market=="ftse"],all_vol[market=="ftse"])
-bktst_FTSE_PSC<-make_strategy(strategy=strategy_PSC,shedule[market=="ftse"],all_vol[market=="ftse"])
-bktst_FTSE_SS<-make_strategy(strategy=strategy_SS,shedule[market=="ftse"],all_vol[market=="ftse"])
-
-g_ftse_csc<- bktst_FTSE_CSC %>% ggplot() + geom_line(aes(x=date,y=pnl),size=2,alpha=0.75) + ggtitle("FTSE CSC")
-g_ftse_psc<- bktst_FTSE_PSC %>% ggplot() + geom_line(aes(x=date,y=pnl),size=2,alpha=0.75) + ggtitle("FTSE PSC")
-g_ftse_ss<- bktst_FTSE_SS %>% ggplot() + geom_line(aes(x=date,y=pnl),size=2,alpha=0.75) + ggtitle("FTSE SS")
-
-
-@
-
-\newpage
-\section{Strategies for FTSE}
-
-\subsection{CSC}
-
-\begin{center}
-\Sexpr{make_plot(plot(g_ftse_csc),height="20cm",width="20cm")}
-\end{center}
-
-\subsection{PSC}
-
-\begin{center}
-\Sexpr{make_plot(plot(g_ftse_psc),height="20cm",width="20cm")}
-\end{center}
-
-\subsection{SS}
-
-\begin{center}
-\Sexpr{make_plot(plot(g_ftse_ss),height="20cm",width="20cm")}
-\end{center}
-
-<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
-
-bktst_NKY_CSC<-make_strategy(strategy=strategy_CSC,shedule[market=="nky"],all_vol[market=="nky"])
-bktst_NKY_PSC<-make_strategy(strategy=strategy_PSC,shedule[market=="nky"],all_vol[market=="nky"])
-bktst_NKY_SS<-make_strategy(strategy=strategy_SS,shedule[market=="nky"],all_vol[market=="nky"])
-
-g_nky_csc<- bktst_NKY_CSC %>% ggplot() + geom_line(aes(x=date,y=pnl),size=2,alpha=0.75) + ggtitle("NKY CSC")
-g_nky_psc<- bktst_NKY_PSC %>% ggplot() + geom_line(aes(x=date,y=pnl),size=2,alpha=0.75) + ggtitle("NKY PSC")
-g_nky_ss<- bktst_NKY_SS %>% ggplot() + geom_line(aes(x=date,y=pnl),size=2,alpha=0.75) + ggtitle("NKY SS")
-
-@
-
-\newpage
-\section{Strategies for NKY}
-
-\subsection{CSC}
-
-\begin{center}
-\Sexpr{make_plot(plot(g_nky_csc),height="20cm",width="20cm")}
-\end{center}
-
-\subsection{PSC}
-
-\begin{center}
-\Sexpr{make_plot(plot(g_nky_psc),height="20cm",width="20cm")}
-\end{center}
-
-\subsection{SS}
-
-\begin{center}
-\Sexpr{make_plot(plot(g_nky_ss),height="20cm",width="20cm")}
-\end{center}
 
 \end{document}
 

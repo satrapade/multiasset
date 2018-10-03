@@ -87,8 +87,20 @@ all_vol<-rbind( # data.table with all volatilities
 all_strikes<-all_vol[,.(strikes=sort(unique(Strike))),keyby=market]
 all_maturities<-all_vol[,.(maturities=sort(unique(Days))),keyby=market]
 
-listed_expiries<-list(
+listed_expiries_3m<-list(
     quote(month %in% c("March","June","September","December")),
+    quote(wday=="Friday"),
+    quote(wday_count==3)
+)
+
+listed_expiries_6m_a<-list(
+    quote(month %in% c("June","December")),
+    quote(wday=="Friday"),
+    quote(wday_count==3)
+)
+
+listed_expiries_6m_b<-list(
+    quote(month %in% c("March","September")),
     quote(wday=="Friday"),
     quote(wday_count==3)
 )
@@ -199,7 +211,22 @@ interpolate_vol<-function(date,strike,days,vsurf)
 }
 
 shedule<-make_roll_dates(
-  filter_list=listed_expiries,
+  filter_list=listed_expiries_3m,
+  vsurfs=all_vol
+)
+
+shedule_3m<-make_roll_dates(
+  filter_list=listed_expiries_3m,
+  vsurfs=all_vol
+)
+
+shedule_6m_a<-make_roll_dates(
+  filter_list=listed_expiries_6m_a,
+  vsurfs=all_vol
+)
+
+shedule_6m_b<-make_roll_dates(
+  filter_list=listed_expiries_6m_b,
   vsurfs=all_vol
 )
 
@@ -665,20 +692,51 @@ make_backtest_plot<-function(
 }
 
 
-all_backtests<-data.table(
+all_backtests_3m<-data.table(
   strategy=rep(names(strategies),times=length(markets)),
   market=rep(markets,each=length(strategies))
 )[,c(.SD,list(
   backtest=mapply(function(the_market,the_strategy){
     make_strategy(
       strategy=strategies[[the_strategy]],
-      shedule[market==the_market],
+      shedule_3m[market==the_market],
       all_vol[market==the_market]
     )
   },market,strategy,SIMPLIFY=FALSE)
 ))][,c(.SD,list(
   plot=mapply(make_backtest_plot,backtest=backtest,the_market=market,the_strategy=strategy)
 ))]
+
+all_backtests_6m_a<-data.table(
+  strategy=rep(names(strategies),times=length(markets)),
+  market=rep(markets,each=length(strategies))
+)[,c(.SD,list(
+  backtest=mapply(function(the_market,the_strategy){
+    make_strategy(
+      strategy=strategies[[the_strategy]],
+      shedule_6m_a[market==the_market],
+      all_vol[market==the_market]
+    )
+  },market,strategy,SIMPLIFY=FALSE)
+))][,c(.SD,list(
+  plot=mapply(make_backtest_plot,backtest=backtest,the_market=market,the_strategy=strategy)
+))]
+
+all_backtests_6m_b<-data.table(
+  strategy=rep(names(strategies),times=length(markets)),
+  market=rep(markets,each=length(strategies))
+)[,c(.SD,list(
+  backtest=mapply(function(the_market,the_strategy){
+    make_strategy(
+      strategy=strategies[[the_strategy]],
+      shedule_6m_b[market==the_market],
+      all_vol[market==the_market]
+    )
+  },market,strategy,SIMPLIFY=FALSE)
+))][,c(.SD,list(
+  plot=mapply(make_backtest_plot,backtest=backtest,the_market=market,the_strategy=strategy)
+))]
+
 
 NNcast<-function(
   data,
@@ -715,14 +773,33 @@ NNcast<-function(
 }
 
 
-backtest_plot_matrix<-NNcast(
-  all_backtests,
+backtest_3m_plot_matrix<-NNcast(
+  all_backtests_3m,
   i_name="strategy",
   j_name="market",
   v_name="plot",
   fun=identity,
   scrub_fun = identity
 )
+
+backtest_6m_a_plot_matrix<-NNcast(
+  all_backtests_6m_a,
+  i_name="strategy",
+  j_name="market",
+  v_name="plot",
+  fun=identity,
+  scrub_fun = identity
+)
+
+backtest_6m_b_plot_matrix<-NNcast(
+  all_backtests_6m_b,
+  i_name="strategy",
+  j_name="market",
+  v_name="plot",
+  fun=identity,
+  scrub_fun = identity
+)
+
 
 @
 
@@ -748,17 +825,32 @@ g_dof<-dof %>%
 We wish to investigate the cause of infrequent, relatively large drawdowns.
 
 \newpage
-\section{Strategy, market backtests}
+\section{Strategy, market backtests, 3m}
 
 \begin{center}
-\Sexpr{matrix2tabular(backtest_plot_matrix)}
+\Sexpr{matrix2tabular(backtest_3m_plot_matrix)}
 \end{center}
+
+\newpage
+\section{Strategy, market backtests, 6m (Jun, Dec)}
+
+\begin{center}
+\Sexpr{matrix2tabular(backtest_6m_a_plot_matrix)}
+\end{center}
+
+\newpage
+\section{Strategy, market backtests, 6m (Mar, Sep)}
+
+\begin{center}
+\Sexpr{matrix2tabular(backtest_6m_b_plot_matrix)}
+\end{center}
+
 
 <<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
 
 equal_backtest<-data.table(
-  date=all_backtests$backtest[[1]]$date,
-  pnl=rowMeans(do.call(cbind,mapply(function(b)b$pnl,all_backtests$backtest,SIMPLIFY=FALSE)))
+  date=all_backtests_3m$backtest[[1]]$date,
+  pnl=rowMeans(do.call(cbind,mapply(function(b)b$pnl,all_backtests_3m$backtest,SIMPLIFY=FALSE)))
 )
 
 g_equal<-melt(merge(
@@ -798,16 +890,16 @@ theoretical_weights<-c(
 )
 
 backtest_matrix<-local({
-    res<-do.call(cbind,mapply(function(b)b$pnl,all_backtests$backtest,SIMPLIFY=FALSE))
-    colnames(res)<-paste0(all_backtests$market,"|",all_backtests$strategy)
-    rownames(res)<-as.character(all_backtests$backtest[[1]]$date,format="%Y-%m-%d")
+    res<-do.call(cbind,mapply(function(b)b$pnl,all_backtests_3m$backtest,SIMPLIFY=FALSE))
+    colnames(res)<-paste0(all_backtests_3m$market,"|",all_backtests_3m$strategy)
+    rownames(res)<-as.character(all_backtests_3m$backtest[[1]]$date,format="%Y-%m-%d")
     res
   })
 
 theoretical_backtest<-data.table(
-  date=all_backtests$backtest[[1]]$date,
+  date=all_backtests_3m$backtest[[1]]$date,
   pnl=local({
-    drop(backtest_matrix %*% cbind(theoretical_weights[all_backtests$strategy] %>% {./sum(.)}))
+    drop(backtest_matrix %*% cbind(theoretical_weights[all_backtests_3m$strategy] %>% {./sum(.)}))
   })
 )
 
@@ -861,16 +953,16 @@ historical_weights<-c(
 )
 
 backtest_matrix<-local({
-    res<-do.call(cbind,mapply(function(b)b$pnl,all_backtests$backtest,SIMPLIFY=FALSE))
-    colnames(res)<-paste0(all_backtests$market,"|",all_backtests$strategy)
-    rownames(res)<-as.character(all_backtests$backtest[[1]]$date,format="%Y-%m-%d")
+    res<-do.call(cbind,mapply(function(b)b$pnl,all_backtests_3m$backtest,SIMPLIFY=FALSE))
+    colnames(res)<-paste0(all_backtests_3m$market,"|",all_backtests_3m$strategy)
+    rownames(res)<-as.character(all_backtests_3m$backtest[[1]]$date,format="%Y-%m-%d")
     res
   })
 
 historical_backtest<-data.table(
-  date=all_backtests$backtest[[1]]$date,
+  date=all_backtests_3m$backtest[[1]]$date,
   pnl=local({
-    drop(backtest_matrix %*% cbind(historical_weights[all_backtests$strategy] %>% {./sum(.)}))
+    drop(backtest_matrix %*% cbind(historical_weights[all_backtests_3m$strategy] %>% {./sum(.)}))
   })
 )
 

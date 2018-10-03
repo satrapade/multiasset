@@ -210,11 +210,6 @@ interpolate_vol<-function(date,strike,days,vsurf)
   ))
 }
 
-shedule<-make_roll_dates(
-  filter_list=listed_expiries_3m,
-  vsurfs=all_vol
-)
-
 shedule_3m<-make_roll_dates(
   filter_list=listed_expiries_3m,
   vsurfs=all_vol
@@ -1006,7 +1001,11 @@ Short Straddles & 16 \% \\
 
 <<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
 
-spx_90_100_ps_backtest<-make_strategy(strategy=strategy_90_100_PS,shedule[market=="spx"],all_vol[market=="spx"])
+spx_90_100_ps_backtest<-make_strategy(
+  strategy=strategy_90_100_PS,
+  shedule_3m[market=="spx"],
+  all_vol[market=="spx"]
+)
 
 g_spx_90_100_ps<-melt(merge(
   x=spx_90_100_ps_backtest,
@@ -1060,12 +1059,12 @@ g_combined <- combined_backtest %>%
 
 <<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
 
-g_close<-shedule %>% 
+g_close<-shedule_3m %>% 
   ggplot() +
   geom_line(aes(x=date,y=close,col=market)) +
   ggtitle("Market closing prices")
 
-g_vol<-shedule %>% 
+g_vol<-shedule_3m %>% 
   ggplot() +
   geom_line(aes(x=date,y=vol,col=market)) +
   ggtitle("Market average volatility")

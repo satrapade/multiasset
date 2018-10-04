@@ -648,6 +648,16 @@ strategies<-list(
   ZCRR=strategy_ZCRR
 )
 
+strategies1<-list(
+  SS=list(payoff=strategy_SS,shedule=shedule_3m),
+  CSC=list(payoff=strategy_CSC,shedule=shedule_3m),
+  PSC=list(payoff=strategy_PSC,shedule=shedule_3m),
+  CR=list(payoff=strategy_CR,shedule=shedule_3m),
+  PR=list(payoff=strategy_PR,shedule=shedule_3m),
+  ZCRR=list(payoff=strategy_ZCRR,shedule=shedule_3m)
+)
+
+
 #
 # list of markets
 #
@@ -1084,6 +1094,134 @@ closing prices by market shown below.
 &
 \Sexpr{make_plot(plot(g_vol),height="10cm",width="10cm")}
 \end{tabular}
+
+\newpage
+\section{Backtest algorithm}
+
+<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
+@
+
+\subsection{backtest inputs}
+
+\noindent A backtest requires the following inputs:
+
+\vskip 5mm
+
+\begin{enumerate}
+\item volatility surface
+\item schedule
+\item payoff
+\end{enumerate}
+
+\vskip 5mm
+
+\subsection{volatility surface input}
+
+\vskip 5mm
+
+\noindent The volatility surface input is an R {\tt data.table} containing volatility
+marks for all markets, strikes and maturities. The data is stored in ``long format'', 
+so every volatility mark occupies a single row. The schema is as follows:
+
+\vskip 5mm
+
+\begin{center}
+\begin{tabular}{l l}
+\hline
+\rowcolor{gray!20}
+\multicolumn{2}{c}{ volatility surface} \\
+{\tt Date} & reval date \\
+{\tt Strike} & option strike \\
+{\tt Days} & option maturity \\
+{\tt ImpliedVol} & implied volatility \\
+{\tt ClosePrice} & closing price underlying \\
+{\tt market} & market name \\
+\end{tabular}
+\end{center}
+
+\vskip 5mm
+
+\subsection{shedule input}
+
+\vskip 5mm
+
+
+\noindent The schedule input is an R {\tt data.table} containing one row for each date
+and market we want bactested p\&l for. In addition to these data items, the shedule contains
+the market's close, the average volatility and the current roll period number, start date, 
+end date and days left. Options are assumed to expire on the last day of their respective 
+roll period.
+
+\vskip 5mm
+
+\begin{center}
+\begin{tabular}{l l}
+\hline
+\rowcolor{gray!20}
+\multicolumn{2}{c}{ shedule } \\
+{\tt date} & trading date  \\
+{\tt market} & market \\
+{\tt close } & closing price \\
+{\tt vol } & average vol across all strikes and maturities \\
+{\tt roll } & roll period \\
+{\tt start} & roll period starting date \\
+{\tt end} & roll period end date \\
+{\tt maturity} & days until end of current roll period \\
+\end{tabular}
+\end{center}
+
+\vskip 5mm
+
+\subsection{payoff input}
+
+\vskip 5mm
+
+\noindent the payoff is an R {\tt data.table} containing one row for each of the
+payoffs we intend to roll on each roll date. For each payoff, the table 
+contains a valuation model and a roll function. The valuation model is used
+to compute option values on each day in the roll period. The roll function is
+used to compute option strikes on roll dates. The valuation model is calld for
+each day in the shedule. The roll function is called only on roll period start days
+
+\vskip 5mm
+
+\begin{center}
+\begin{tabular}{l l}
+\hline
+\rowcolor{gray!20}
+\multicolumn{2}{c}{ payoff } \\
+model & {\tt function(spot,strike,maturity,rate,volatility)} \\
+strike & {\tt function(spot,volatility)} \\
+\end{tabular}
+\end{center}
+
+\newpage
+\subsection{backtest workflow}
+
+\vskip 5mm
+
+\begin{itemize}
+\item start with shedule
+\item (not vectorized) compute table of strikes for each roll date (date is equal to start of roll period)
+by calling roll function. Since roll dates are months appart, the roll function is called relatively
+infrequently and does not need to be optimized. 
+\item {\tt LEFT JOIN} option strikes on roll period. strikes are constant over the whole roll period. We use
+the {\tt data.table} {\bf X[Y]} idiom to achieve this, it is very fast.
+\item (vectorized) compuite maturity, strike pillars surrounding contract economics. We use the {\tt findInterval}
+function for this, which is very fast.
+\item {\tt LEFT JOIN} surface volatilities on surrounding pillars. {\tt data.table}'s {\bf X[Y]} idiom is used
+here too.
+\item (vectorized) perform biliear interpolation. This is done on the whole {\tt data.table} in one go since
+the biliear interpolation formula is vectorizeable.
+\item (vectorized) call valuation model, store reval. The model needs to support vectorized operation, there
+is a single call with vectors of spot, vol, maturity, strike and rate as inputs.
+\end{itemize}
+
+\vskip 5mm
+
+The calculations outlined are vectorizeable. This means that the backtest is quite fast. We can backtest
+a single option on a single market over a 20-year period in about 0.5 seconds. 
+
 
 
 \end{document}

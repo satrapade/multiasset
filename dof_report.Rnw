@@ -14,6 +14,7 @@
 \usepackage{xfrac}
 \usepackage[space]{grffile}
 \usepackage{hyperref}
+\usepackage{listings}
 
 \DeclareRobustCommand\Tstrut{\rule{0pt}{2.6ex}}         % = `top' strut
 \DeclareRobustCommand\Bstrut{\rule[-0.9ex]{0pt}{0pt}}   % = `bottom' strut
@@ -1222,7 +1223,96 @@ is a single call with vectors of spot, vol, maturity, strike and rate as inputs.
 The calculations outlined are vectorizeable. This means that the backtest is quite fast. We can backtest
 a single option on a single market over a 20-year period in about 0.5 seconds. 
 
+\newpage
+\subsection{volatility interpolation}
 
+\vskip 5mm
+The {\tt interpolate\_vol} function takes a reval date, a strike and a maturity as inputs
+and performs volatility intepolation on a single-market volatility surface. This calculation
+needs to be performed for every day, every market and every strike in the strategy. This means
+that the number of interpolations can run into the hundreds of thousands .It is therefore
+really important to be as efficient as possible. This means we need to vectorize operations
+as much as we can. The calculation as shown works well for a single market. To do intepolation over 
+multiple markets (for example from a multi-market shedule), we will use the {\tt data.table} 
+{\bf keyby} feature to split the schedule by market and perform  the interpolation on every 
+subset separately, inside the {\tt data.table}'s {\bf J} expression.
+
+\lstset{
+language=R,
+numbers=left,
+basicstyle=\footnotesize\ttfamily,
+commentstyle=\itshape\color{purple!40!black},
+}   
+
+\begin{lstlisting}
+
+interpolate_vol<-function(date,strike,days,vsurf)
+{
+
+  # vector of strike pillars in vol surface
+  strikes<-sort(unique(vsurf$Strike))
+  
+  # vector of maturity pillars in vol surface
+  maturities<-sort(unique(vsurf$Days))
+  
+  # volatility surface pillars surrounding contract 
+  # strike and expiry days
+  option_dets<-data.table(
+    date=date,
+    lo_strike=strikes[findInterval(strike,strikes)],
+    hi_strike=strikes[findInterval(strike,strikes)+1],
+    lo_mat=maturities[findInterval(days,maturities)],
+    hi_mat=maturities[findInterval(days,maturities)+1]
+  )
+  
+  # left join lower left corner's volatility
+  vol_ll<-merge(
+    x=option_dets,
+    y=vsurf,
+    by.x=c("date","lo_strike","lo_mat"),
+    by.y=c("Date","Strike","Days")
+  )$ImpliedVol
+  
+  # left join higher left corner's volatility
+  vol_lh<-merge(
+    x=option_dets,
+    y=vsurf,
+    by.x=c("date","lo_strike","hi_mat"),
+    by.y=c("Date","Strike","Days")
+  )$ImpliedVol
+  
+  # left join right lower corner's volatility
+  vol_hl<-merge(
+    x=option_dets,
+    y=vsurf,
+    by.x=c("date","hi_strike","lo_mat"),
+    by.y=c("Date","Strike","Days")
+  )$ImpliedVol
+  
+  # left join right higher corner's volatility
+  vol_hh<-merge(
+    x=option_dets,
+    y=vsurf,
+    by.x=c("date","hi_strike","hi_mat"),
+    by.y=c("Date","Strike","Days")
+  )$ImpliedVol
+  
+  # coordinates of contract strike, expiry inside surrounding pillar points
+  t_strike<-(strike-option_dets$lo_strike)/(option_dets$hi_strike-option_dets$lo_strike)
+  t_mat<-(days-option_dets$lo_mat)/(option_dets$hi_mat-option_dets$lo_mat)
+  
+  # bilinear interpolation formula,
+  # result is vector of volatilities
+  rowSums(cbind(
+    vol_ll*(1-t_strike)*(1-t_mat),
+    vol_hl*(t_strike)*(1-t_mat),
+    vol_lh*(1-t_strike)*(t_mat),
+    vol_hh*(t_strike)*(t_mat)
+  ))
+  
+}
+
+\end{lstlisting}
 
 \end{document}
 

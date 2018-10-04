@@ -10,3 +10,4 @@ figure/*.*
 .DS_Store
 *.tex
 *.toc
+*.pdf

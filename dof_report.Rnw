@@ -636,6 +636,21 @@ strategy_ZCRR<-list(
   )
 )
 
+########################################
+# TAIL2, 2 delta P
+########################################
+strategy_TAIL2<-list(
+  leg1=list(
+    model=EP,
+    strike=function(close,vol,maturity){ 
+      put_K<-D2PK(0.02,close,vol,maturity/365)
+      put_K
+    },
+    weight=(+1)
+  )
+)
+
+
 
 #
 # list of strategies
@@ -1036,9 +1051,142 @@ g_spx_90_100_ps<-melt(merge(
 
 @
 
+\newpage
+\section{Drawdown mitigation: SPX ``teenies''}
+
+<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
+
+########################################
+# TAIL1, 1 delta P
+########################################
+strategy_TAIL1<-list(
+  leg1=list(
+    model=EP,
+    strike=function(close,vol,maturity){ 
+      put_K<-D2PK(0.01,close,vol,maturity/365)
+      put_K
+    },
+    weight=(+1)
+  )
+)
+
+
+########################################
+# TAIL2, 2 delta P
+########################################
+strategy_TAIL2<-list(
+  leg1=list(
+    model=EP,
+    strike=function(close,vol,maturity){ 
+      put_K<-D2PK(0.02,close,vol,maturity/365)
+      put_K
+    },
+    weight=(+1)
+  )
+)
+
+########################################
+# TAIL5, 5 delta P
+########################################
+strategy_TAIL5<-list(
+  leg1=list(
+    model=EP,
+    strike=function(close,vol,maturity){ 
+      put_K<-D2PK(0.05,close,vol,maturity/365)
+      put_K
+    },
+    weight=(+1)
+  )
+)
+
+
+
+spx_tail1_backtest<-make_strategy(
+  strategy=strategy_TAIL1,
+  shedule_3m[market=="spx"],
+  all_vol[market=="spx"]
+)
+
+spx_tail2_backtest<-make_strategy(
+  strategy=strategy_TAIL2,
+  shedule_3m[market=="spx"],
+  all_vol[market=="spx"]
+)
+
+spx_tail5_backtest<-make_strategy(
+  strategy=strategy_TAIL5,
+  shedule_3m[market=="spx"],
+  all_vol[market=="spx"]
+)
+
+
+x<-merge(
+  x=spx_tail2_backtest,
+  y=dof,
+  by.x="date",
+  by.y="Date"
+)
+
+g_tails<-rbind(
+  data.table(spx_tail1_backtest,delta="1"),
+  data.table(spx_tail2_backtest,delta="2"),
+  data.table(spx_tail5_backtest,delta="5")
+) %>% 
+  ggplot() +
+  geom_line(aes(x=date,y=pnl,col=delta),size=2,alpha=0.75)+
+  ggtitle("Tail hedges: 1, 2 and 5 deltas")
+
+g_tail2_vs_dof<-melt(merge(
+  x=spx_tail2_backtest,
+  y=dof,
+  by.x="date",
+  by.y="Date"
+)[,.(
+  date,
+  teeny=cumsum(c(0,diff(pnl))),
+  dof=cumsum(c(0,diff(PnL)))
+)],id.vars = "date",measure.vars = c("teeny","dof")) %>% 
+  ggplot() +
+  geom_line(aes(x=date,y=value,col=variable),size=2,alpha=0.75)+
+  ggtitle("Quarterly rolling 2-delta SPX puts vs DOF")
+
+
+
+@
+
+\vskip 5mm
+
+\noindent Downside mitigation can be achieved using ``teenies'', i.e. very low delta puts (50 to 300 bps).
+These options almost never pay out anything at settlement. However, their value tends to spike during 
+market-wide bouts of liquidation. We can take advantage of this by holding some amount of these and
+selling them back whever their value spikes by a pre-determined amount. The combined portfolio should
+have smaller returns but much reduced drawdowns. The key to this risk-mitigation strategy is that
+we use a ``stop-profit'' on the tail-protection portfolio rather than a ``stop-loss'' on the risk-premium
+portfolio. The reason this works better than stop-losses is that volatility risk premia are very strongly 
+mean-reverting. It is better to buy tail-risk when the market is calm and then sell volatility on the pop 
+rather than stop-out the risk premium collection portfolio on the pop and buy the volatility highs.
+(tail risk becomes vol risk on a strong selloff, the teenies become 5-10 deltas pretty quickly)
+
+\vskip 5mm
 
 \begin{center}
-\Sexpr{make_plot(plot(g_spx_90_100_ps),height="20cm",width="20cm")}
+\Sexpr{make_plot(plot(g_tail2_vs_dof),height="20cm",width="20cm")}
+\end{center}
+
+\newpage
+
+\vskip 5mm
+
+\noindent The key metric for choosing a tail hedge is the ratio of premium to potential upside. We
+expect to rarely be able to recoup any of the premium, since tail options almost never end up paying
+out anything. From this viewpoint, lower delta options are the best choice. For the examples examined 
+in thise report, 1-delta SPX puts have the best ratio of premium to "price pop" during a selloff. 
+
+\vskip 5mm
+
+
+\begin{center}
+\Sexpr{make_plot(plot(g_tails),height="20cm",width="20cm")}
 \end{center}
 
 \newpage
@@ -1313,6 +1461,11 @@ interpolate_vol<-function(date,strike,days,vsurf)
 }
 
 \end{lstlisting}
+
+\newpage
+\subsection{Unit tests}
+
+
 
 \end{document}
 

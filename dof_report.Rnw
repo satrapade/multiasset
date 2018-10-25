@@ -291,7 +291,9 @@ compute_option_premium<-function(
   shedule,
   all_vol,
   strike_fun=function(close,vol,maturity)close,
-  model=EC
+  model=EC,
+  all_strikes=all_vol[,.(strikes=sort(unique(Strike))),keyby=market],
+  all_maturities=all_vol[,.(maturities=sort(unique(Days))),keyby=market]
 )merge(
   x=shedule[date==start,.(
     market,
@@ -1478,7 +1480,8 @@ synthetic_vol<-data.table(expand.grid(
   ClosePrice=100.0,
   ImpliedVol=0.1,
   market="synthetic",
-  market_count=1
+  market_count=1,
+  stringsAsFactors = FALSE
 ))[,.SD,keyby=Date]
 
 synthetic_shedule<-make_roll_dates(
@@ -1486,179 +1489,13 @@ synthetic_shedule<-make_roll_dates(
   vsurfs=synthetic_vol
 )
 
-compute_option_premium<-function(
-  shedule,
-  all_vol,
-  strike_fun=function(close,vol,maturity)close,
-  model=EC,
-  all_strikes=all_vol[,.(strikes=sort(unique(Strike))),keyby=market],
-  all_maturities=all_vol[,.(maturities=sort(unique(Days))),keyby=market]
-){
-  res<-merge(
-    x=shedule[date==start,.(
-      market,
-      strike_close=close,
-      strike_vol=vol,
-      strike=strike_fun(close,vol,maturity),
-      roll
-    )],
-    y=shedule[,.(date,market,close,roll,maturity)],
-    by.x=c("market","roll"),
-    by.y=c("market","roll")
-  )
-  
-  res[,
-  local({
-    the_strikes<-all_strikes[market,strikes]
-    the_maturities<-all_maturities[market,maturities]
-    i<-findInterval(pmax(strike,0),the_strikes)
-    j<-findInterval(pmax(maturity,0),the_maturities)
-    dets<-data.table(
-      date=date,
-      market=market,
-      lo_strike=the_strikes[i],
-      hi_strike=the_strikes[i+1],
-      lo_maturity=the_maturities[j],
-      hi_maturity=the_maturities[j+1]
-    )
-    vol_ll<-merge(
-      x=dets,
-      y=all_vol,
-      by.x=c("market","date","lo_strike","lo_maturity"),
-      by.y=c("market","Date","Strike","Days")
-    )$ImpliedVol
-    vol_lh<-merge(
-      x=dets,
-      y=all_vol,
-      by.x=c("market","date","lo_strike","hi_maturity"),
-      by.y=c("market","Date","Strike","Days")
-    )$ImpliedVol
-    vol_hl<-merge(
-      x=dets,
-      y=all_vol,
-      by.x=c("market","date","hi_strike","lo_maturity"),
-      by.y=c("market","Date","Strike","Days")
-    )$ImpliedVol
-    vol_hh<-merge(
-      x=dets,
-      y=all_vol,
-      by.x=c("market","date","hi_strike","hi_maturity"),
-      by.y=c("market","Date","Strike","Days")
-    )$ImpliedVol
-    t_strike<-(strike-dets$lo_strike)/(dets$hi_strike-dets$lo_strike)
-    t_mat<-(maturity-dets$lo_maturity)/(dets$hi_maturity-dets$lo_maturity)
-    vol<-rowSums(cbind(
-      vol_ll*(1-t_strike)*(1-t_mat),
-      vol_hl*(t_strike)*(1-t_mat),
-      vol_lh*(1-t_strike)*(t_mat),
-      vol_hh*(t_strike)*(t_mat)
-    ))
-    premium<-model(close, strike, maturity/365, 0,vol)
-    list(
-      date=date,
-      strike_close=strike_close,
-      strike_vol=strike_vol,
-      strike=strike,
-      option_maturity=maturity,
-      option_vol=vol,
-      premium=premium
-    )
-  }),
-  keyby=market
-]
-  
-}
 
-make_backtest<-function(
-  shedule,
-  volsurf,
-  model,
-  strike_fun=function(close,vol,maturity)close*0.9
-)
-{
-  
-  # roll strikes, 
-  # compute option premium
-  options<-merge(
-    x=shedule,
-    y=compute_option_premium(
-      shedule,
-      volsurf,
-      strike_fun=strike_fun,
-      model=model
-    )[,.(market,date,strike_close,strike,premium)],
-    by.x=c("date","market"),
-    by.y=c("date","market")
-  )
-  
-  # 
-  #
-  backtest<-data.table(
-    market=options$market,
-    date=options$date,
-    start=options$start,
-    end=options$end,
-    maturity=options$maturity,
-    reval=options$premium/options$strike_close
-  )[,c(.SD,list(
-    cash=cumsum(ifelse(
-      start==date,
-      -reval,
-      0
-    )+ifelse(
-      maturity==1,
-      reval,
-      0
-    )),
-    holdings=ifelse(maturity==1,0,reval)
-  ))][,.(
-    market,
-    date,
-    start,
-    end,
-    maturity,
-    reval,
-    pnl=cash+holdings
-  )]
 
-  #
-  #
-  backtest 
-  
-}
-
-make_strategy<-function(
-  strategy,
-  shedule,
-  volsurf
-){
- 
-  bk<-mapply(function(leg){
-    leg_res<-make_backtest(
-      shedule=shedule,
-      volsurf=volsurf,
-      model=leg$model,
-      strike_fun=leg$strike
-    )
-    leg_res
-  },strategy,SIMPLIFY=FALSE)
-  
-  w<-strategy_weights(strategy)
-  
-  strat_res<-do.call(cbind,mapply(function(leg)leg$pnl,bk,SIMPLIFY=FALSE))%*%w
-  
-  data.table(
-    date=bk[[1]]$date,
-    pnl=strat_res[,1]
-  )
-  
-}
-
-# synthetic_90_100_ps_backtest<-make_strategy(
-#   strategy=strategy_90_100_PS,
-#   shedule=synthetic_shedule,
-#   volsurf=synthetic_vol
-# )
+synthetic_90_100_ps_backtest<-make_strategy(
+   strategy=strategy_90_100_PS,
+   shedule=synthetic_shedule,
+   volsurf=synthetic_vol
+ )
 
 @
 

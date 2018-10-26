@@ -231,18 +231,30 @@ shedule_6m_b<-make_roll_dates(
 # european call
 EC <- function(S,X,t,r,v)
 {
-  d1 <- (log(S/X)+(r+0.5*v^2)*t)/(v*sqrt(t))
-  d2 <- d1-v*sqrt(t)
-  S*pnorm(d1)-X*exp(-r*t)*pnorm(d2)
+  ifelse(
+    t<1e-10,
+    pmax(S-X,0),
+    local({
+      d1 <- (log(S/X)+(r+0.5*v^2)*t)/(v*sqrt(t))
+      d2 <- d1-v*sqrt(t)
+      S*pnorm(d1)-X*exp(-r*t)*pnorm(d2)
+    })
+  )
 }
 
 
 # european put
 EP  <- function(S,X,t,r,v)
 {
-  d1 <- (log(S/X)+(r+0.5*v^2)*t)/(v*sqrt(t))
-  d2 <- d1-v*sqrt(t)
-  X*exp(-r*t)*pnorm(-d2)-S*pnorm(-d1)
+  ifelse(
+    t<1e-10,
+    pmax(X-S,0),
+    local({
+      d1 <- (log(S/X)+(r+0.5*v^2)*t)/(v*sqrt(t))
+      d2 <- d1-v*sqrt(t)
+      X*exp(-r*t)*pnorm(-d2)-S*pnorm(-d1)
+    })
+  )
 }
 
 
@@ -1489,15 +1501,78 @@ synthetic_shedule<-make_roll_dates(
   vsurfs=synthetic_vol
 )
 
+  
+g_synthetic_90_100_ps_backtest<-make_strategy(
+   strategy=list(
+      leg1=list(model=EP,strike=function(close,vol,maturity){ close*0.9 },weight=(+1)),
+      leg2=list(model=EP,strike=function(close,vol,maturity){ close*1.0 },weight=(-1))
+    ),
+    shedule=synthetic_shedule,
+    volsurf=synthetic_vol
+) %>% 
+ggplot() +
+geom_line(aes(x=date,y=pnl),size=2,alpha=0.75) +
+ggtitle("90-100 PS")
 
+g_synthetic_95_105_CS_backtest<-make_strategy(
+   strategy=list(
+      leg1=list(model=EC,strike=function(close,vol,maturity){ close*0.95 },weight=(+1)),
+      leg2=list(model=EC,strike=function(close,vol,maturity){ close*1.05 },weight=(-1))
+    ),
+    shedule=synthetic_shedule,
+    volsurf=synthetic_vol
+) %>% 
+ggplot() +
+geom_line(aes(x=date,y=pnl),size=2,alpha=0.75)+
+ggtitle("95-105 CS")
 
-synthetic_90_100_ps_backtest<-make_strategy(
-   strategy=strategy_90_100_PS,
-   shedule=synthetic_shedule,
-   volsurf=synthetic_vol
- )
+g_synthetic_95_C_backtest<-make_strategy(
+   strategy=list(
+      leg1=list(model=EC,strike=function(close,vol,maturity){ close*0.95 },weight=(+1))
+    ),
+    shedule=synthetic_shedule,
+    volsurf=synthetic_vol
+) %>% 
+ggplot() +
+geom_line(aes(x=date,y=pnl),size=2,alpha=0.75)+
+ggtitle("Long 95 CALL")
+
+g_synthetic_105_C_backtest<-make_strategy(
+   strategy=list(
+      leg2=list(model=EC,strike=function(close,vol,maturity){ close*1.05 },weight=(-1))
+    ),
+    shedule=synthetic_shedule,
+    volsurf=synthetic_vol
+) %>% 
+ggplot() +
+geom_line(aes(x=date,y=pnl),size=2,alpha=0.75)+
+ggtitle("Short 105 CALL")
+
 
 @
+
+\vskip 5mm
+
+\noindent We perform a number of backtests for selected strategies on synthetic data to ensure
+the backtest engine is working as expected. 
+
+\vskip 5mm
+
+\begin{center}
+\begin{tabular}{m{10cm} m{10cm}}
+\rowcolor{gray!20}
+\multicolumn{2}{c}{ Synthetic market, constant price at 100, constant vol at \% } 
+\\
+\Sexpr{make_plot(plot(g_synthetic_90_100_ps_backtest),height="10cm",width="10cm")}
+&
+\Sexpr{make_plot(plot(g_synthetic_95_105_CS_backtest),height="10cm",width="10cm")}
+\\
+\Sexpr{make_plot(plot(g_synthetic_95_C_backtest),height="10cm",width="10cm")}
+&
+\Sexpr{make_plot(plot(g_synthetic_105_C_backtest),height="10cm",width="10cm")}
+\\
+\end{tabular}
+\end{center}
 
 
 

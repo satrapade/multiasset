@@ -1548,6 +1548,12 @@ ggplot() +
 geom_line(aes(x=date,y=pnl),size=2,alpha=0.75)+
 ggtitle("Short 105 CALL")
 
+make_backtest(
+  shedule=synthetic_shedule,
+  volsurf=synthetic_vol,
+  model=EC,
+  strike_fun=function(close,vol,maturity){ close*0.95 }
+)
 
 @
 

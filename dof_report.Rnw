@@ -138,6 +138,7 @@ make_shedule<-function(volsurfs)
 # create a roll schedule from a shedule
 make_roll_dates<-function(filter_list,vsurfs){
   
+   
   shedule<-make_shedule(vsurfs)
   
   date_df<-data.table(
@@ -156,13 +157,18 @@ make_roll_dates<-function(filter_list,vsurfs){
   res1<-res0[,.SD,keyby=date]
   ndx<-sort(unique(res1$date))
   res2<-res1[J(ndx),.SD,mult="first"]
+  
+  relevant_shedule<-shedule[date_df$pday<max(res2$pday)]
+  
   res3<-data.table(
-    res2,
-    start=shedule$date[res2$pday],
-    end=shedule$date[c(res2$pday[-1],nrow(shedule))],
-    roll=1:nrow(res2)
+    head(res2,-1),
+    start=head(res2$date,-1),
+    end=tail(res2$date,-1),
+    roll=seq.int(nrow(res2)-1)
   )
-  shedule_with_roll<-data.table(shedule,roll=findInterval(shedule$date,res3$date))
+  
+  shedule_with_roll<-data.table(relevant_shedule,roll=findInterval(relevant_shedule$date,res3$date))
+  
   res4<-res3[,.SD,keyby=roll][shedule_with_roll[,.SD,keyby=roll]][roll>0][,.(
     roll=roll,
     date=i.date,
@@ -171,6 +177,7 @@ make_roll_dates<-function(filter_list,vsurfs){
     market=market,
     maturity=as.integer(end-i.date)
   )]
+  
   px<-vsurfs[,.(
       date=as.Date(stri_sub(Date[1],1,10),format="%Y-%m-%d"),
       close=ClosePrice[1],
@@ -180,6 +187,7 @@ make_roll_dates<-function(filter_list,vsurfs){
   res5<-px[,.SD,keyby=c("date","market")][res4[,.SD,keyby=c("date","market")]]
   
   res5
+
 }
 
 #
@@ -740,6 +748,20 @@ all_backtests_3m<-data.table(
 ))][,c(.SD,list(
   plot=mapply(make_backtest_plot,backtest=backtest,the_market=market,the_strategy=strategy)
 ))]
+
+x<-data.table(
+  strategy=rep(names(strategies),times=length(markets)),
+  market=rep(markets,each=length(strategies))
+)[,c(.SD,list(
+  backtest=mapply(function(the_market,the_strategy){
+    make_strategy(
+      strategy=strategies[[the_strategy]],
+      shedule_6m_a[market==the_market],
+      all_vol[market==the_market]
+    )
+  },market,strategy,SIMPLIFY=FALSE)
+))]
+
 
 all_backtests_6m_a<-data.table(
   strategy=rep(names(strategies),times=length(markets)),
@@ -1547,11 +1569,25 @@ ggplot() +
 geom_line(aes(x=date,y=pnl),size=2,alpha=0.75)+
 ggtitle("Short 105 CALL")
 
-make_backtest(
+x<-make_backtest(
   shedule=synthetic_shedule,
   volsurf=synthetic_vol,
   model=EC,
   strike_fun=function(close,vol,maturity){ close*0.95 }
+)
+
+y<-compute_option_premium(
+      shedule=synthetic_shedule,
+      all_vol=synthetic_vol,
+      strike_fun=function(close,vol,maturity){ close*0.95 },
+      model=EC
+)
+
+z<-merge(
+  x=synthetic_shedule[date==start,.(market, strike_close=close, strike_vol=vol, strike=close*0.95, roll)],
+  y=synthetic_shedule[,.(date,market,close,roll,maturity)],
+  by.x=c("market","roll"),
+  by.y=c("market","roll")
 )
 
 @
@@ -1566,7 +1602,7 @@ the backtest engine is working as expected.
 \begin{center}
 \begin{tabular}{m{10cm} m{10cm}}
 \rowcolor{gray!20}
-\multicolumn{2}{c}{ Synthetic market, constant price at 100, constant vol at \% } 
+\multicolumn{2}{c}{ Synthetic market, constant price at 100, constant vol at 10\% } 
 \\
 \Sexpr{make_plot(plot(g_synthetic_90_100_ps_backtest),height="10cm",width="10cm")}
 &

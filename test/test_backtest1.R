@@ -179,8 +179,6 @@ D2PK<-function(delta,close,vol,maturity){
   close*exp(qnorm(delta,sd=vol*sqrt(maturity),lower.tail=TRUE))
 }
 
-
-
 #
 #
 #
@@ -344,8 +342,6 @@ listed_expiries_6m_b<-list(
 
 
 
-
-
 synthetic_vol<-data.table(expand.grid(
   Date=seq(Sys.Date()-365,Sys.Date(),by=1),
   Strike=seq(0,300,length.out=10),
@@ -360,6 +356,14 @@ synthetic_vol<-data.table(expand.grid(
 synthetic_shedule<-make_roll_dates(
   filter_list=listed_expiries_3m,
   vsurfs=synthetic_vol
+)
+
+x<-make_strategy(
+   strategy=list(
+      leg1=list(model=EC,strike=function(close,vol,maturity){ close*0.95 },weight=(+1))
+    ),
+    shedule=synthetic_shedule,
+    volsurf=synthetic_vol
 )
 
 

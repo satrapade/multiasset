@@ -32,8 +32,6 @@ make_roll_dates_new<-function(
   vsurfs
 ){
   
-  shedule<-make_shedule(vsurfs)
-  
   date_df<-data.table(
     date=shedule$date,
     day=day(shedule$date),
@@ -46,41 +44,46 @@ make_roll_dates_new<-function(
     wday_count=ceiling(mday(shedule$date)/7)
   )[,.SD,keyby=date]
   
-  res0<-Reduce(function(a,b)eval(bquote(.(a)[.(b)])),filter_list,init=date_df)
-  res1<-res0[,.SD,keyby=date]
-  ndx<-sort(unique(res1$date))
-  res2<-res1[J(ndx),.SD,mult="first"]
+  roll_dates<-Reduce(
+    function(a,b)eval(bquote(.(a)[.(b)])),
+    filter_list,
+    init=date_df
+  )[,.SD,keyby=date][J(sort(unique(date))),.SD,mult="first"]
   
-  res3<-data.table(
-    res2,
-    start=shedule$date[res2$pday],
-    end=shedule$date[c(res2$pday[-1],nrow(shedule))],
-    roll=1:nrow(res2)
+  roll_intervals<-data.table(
+    start=c(min(shedule$date),roll_dates$date),
+    end=c(roll_dates$date,max(shedule$date)),
+    roll=c("pre",as.character(seq_along(1:(nrow(roll_dates)-1))),"post")
   )
+  
   
   shedule_with_roll<-data.table(
     shedule,
-    roll=findInterval(shedule$date,res3$date) #res3$roll[findInterval(shedule$date,res3$date)]
-  )
+    roll=roll_intervals$roll[findInterval(shedule$date,roll_intervals$start)]
+  )[,.SD,keyby=roll]
   
-  res4<-res3[,.SD,keyby=roll][shedule_with_roll[,.SD,keyby=roll]][roll>0][,.(
-    roll=roll,
-    date=i.date,
-    start=start,
-    end=end,
-    market=market,
-    maturity=as.integer(end-i.date)
-  )]
+  shedule_with_roll_and_intervals<-merge(
+    x=shedule_with_roll,
+    y=roll_intervals,
+    by="roll"
+  )[,.SD,keyby=date]
+  
   
   px<-vsurfs[,.(
-      date=as.Date(stri_sub(Date[1],1,10),format="%Y-%m-%d"),
-      close=ClosePrice[1],
-      vol=mean(ImpliedVol)
-  ),keyby=c("market","Date"),][,.(date,market,close,vol)]
+    date=as.Date(stri_sub(Date[1],1,10),format="%Y-%m-%d"),
+    close=ClosePrice[1],
+    vol=mean(ImpliedVol)
+  ),keyby=c("market","Date"),][,.(date,market,close,vol)][,.SD,keyby=c("date","market")]
   
-  res5<-px[,.SD,keyby=c("date","market")][res4[,.SD,keyby=c("date","market")]]
+  shedule_with_price<-merge(
+    x=shedule_with_roll_and_intervals,
+    y=px,
+    by=c("date","market")
+  )
   
-  res5
+  shedule_with_price[,c(.SD,list(
+    maturity=as.integer(end-date)
+  ))]
 
 }
 
@@ -113,7 +116,7 @@ make_roll_dates<-function(filter_list,vsurfs){
   )
   shedule_with_roll<-data.table(shedule,roll=findInterval(shedule$date,res3$date))
   res4<-res3[,.SD,keyby=roll][shedule_with_roll[,.SD,keyby=roll]][roll>0][,.(
-    roll=roll,
+    roll=as.character(roll),
     date=i.date,
     start=start,
     end=end,
@@ -297,7 +300,7 @@ compute_option_premium<-function(
       vol_lh*(1-t_strike)*(t_mat),
       vol_hh*(t_strike)*(t_mat)
     ))
-    premium<-model(close, strike, maturity/365, 0,vol)
+    premium<-ifelse(grepl("^[0-9]+$",roll),model(close, strike, maturity/365, 0,vol),0)
     list(
       date=date,
       strike_close=strike_close,

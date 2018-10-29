@@ -27,9 +27,11 @@ make_shedule<-function(volsurfs)
 }
 
 # create a roll schedule from a shedule
-make_roll_dates_new<-function(filter_list,vsurfs){
+make_roll_dates_new<-function(
+  filter_list,
+  vsurfs
+){
   
-   
   shedule<-make_shedule(vsurfs)
   
   date_df<-data.table(
@@ -56,7 +58,10 @@ make_roll_dates_new<-function(filter_list,vsurfs){
     roll=1:nrow(res2)
   )
   
-  shedule_with_roll<-data.table(shedule,roll=findInterval(shedule$date,res3$date))
+  shedule_with_roll<-data.table(
+    shedule,
+    roll=findInterval(shedule$date,res3$date) #res3$roll[findInterval(shedule$date,res3$date)]
+  )
   
   res4<-res3[,.SD,keyby=roll][shedule_with_roll[,.SD,keyby=roll]][roll>0][,.(
     roll=roll,
@@ -424,4 +429,55 @@ ggtitle("Long 95 CALL")
 plot(g)
 
 
+  filter_list=listed_expiries_3m
+  vsurfs=synthetic_vol
+  shedule<-make_shedule(vsurfs)
+  
+  date_df<-data.table(
+    date=shedule$date,
+    day=day(shedule$date),
+    mday=mday(shedule$date),
+    qday=qday(shedule$date),
+    yday=yday(shedule$date),
+    pday=seq_along(shedule$date),
+    wday=weekdays(shedule$date),
+    month=months(shedule$date),
+    wday_count=ceiling(mday(shedule$date)/7)
+  )[,.SD,keyby=date]
+  
+  roll_dates<-Reduce(
+    function(a,b)eval(bquote(.(a)[.(b)])),
+    filter_list,
+    init=date_df
+  )[,.SD,keyby=date][J(sort(unique(date))),.SD,mult="first"]
+
+  roll_intervals<-data.table(
+    date=c(min(shedule$date),roll_dates$date,max(shedule$date)),
+    type=c("pre",as.character(seq_along(roll_dates$date)),"post")
+  )[,.SD,keyby=date]
+
+  
+  shedule_with_roll<-data.table(
+    shedule,
+    roll=findInterval(shedule$date,roll_intervals$date) #res3$roll[findInterval(shedule$date,res3$date)]
+  )
+  
+  res4<-res3[,.SD,keyby=roll][shedule_with_roll[,.SD,keyby=roll]][roll>0][,.(
+    roll=roll,
+    date=i.date,
+    start=start,
+    end=end,
+    market=market,
+    maturity=as.integer(end-i.date)
+  )]
+  
+  px<-vsurfs[,.(
+      date=as.Date(stri_sub(Date[1],1,10),format="%Y-%m-%d"),
+      close=ClosePrice[1],
+      vol=mean(ImpliedVol)
+  ),keyby=c("market","Date"),][,.(date,market,close,vol)]
+  
+  res5<-px[,.SD,keyby=c("date","market")][res4[,.SD,keyby=c("date","market")]]
+  
+  res5
 

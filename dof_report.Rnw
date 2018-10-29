@@ -732,7 +732,10 @@ make_backtest_plot<-function(
   plot_latex
   
 }
+@
 
+
+<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
 
 all_backtests_3m<-data.table(
   strategy=rep(names(strategies),times=length(markets)),

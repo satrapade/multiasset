@@ -463,24 +463,20 @@ plot(g)
     roll=roll_intervals$roll[findInterval(shedule$date,roll_intervals$start)]
   )[,.SD,keyby=roll]
   
-  merge(x=shedule_with_roll,y=roll_intervals,by="roll")
+  shedule_with_roll_and_intervals<-merge(
+    x=shedule_with_roll,
+    y=roll_intervals,
+    by="roll"
+  )[,.SD,keyby=date]
   
-  # [,.(
-  #   roll=roll,
-  #   date=i.date,
-  #   start=start,
-  #   end=end,
-  #   market=market,
-  #   maturity=as.integer(end-i.date)
-  # )]
-  # 
-  # px<-vsurfs[,.(
-  #     date=as.Date(stri_sub(Date[1],1,10),format="%Y-%m-%d"),
-  #     close=ClosePrice[1],
-  #     vol=mean(ImpliedVol)
-  # ),keyby=c("market","Date"),][,.(date,market,close,vol)]
-  # 
-  # res5<-px[,.SD,keyby=c("date","market")][res4[,.SD,keyby=c("date","market")]]
-  # 
-  # res5
+   
+  px<-vsurfs[,.(
+      date=as.Date(stri_sub(Date[1],1,10),format="%Y-%m-%d"),
+      close=ClosePrice[1],
+      vol=mean(ImpliedVol)
+  ),keyby=c("market","Date"),][,.(date,market,close,vol)]
+
+  res5<-px[,.SD,keyby=c("date","market")][shedule_with_roll_and_intervals[,.SD,keyby=c("date","market")]]
+
+  res5
 

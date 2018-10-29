@@ -474,9 +474,12 @@ plot(g)
       date=as.Date(stri_sub(Date[1],1,10),format="%Y-%m-%d"),
       close=ClosePrice[1],
       vol=mean(ImpliedVol)
-  ),keyby=c("market","Date"),][,.(date,market,close,vol)]
+  ),keyby=c("market","Date"),][,.(date,market,close,vol)][,.SD,keyby=c("date","market")]
 
-  res5<-px[,.SD,keyby=c("date","market")][shedule_with_roll_and_intervals[,.SD,keyby=c("date","market")]]
-
-  res5
+  shedule_with_price<-merge(
+    x=shedule_with_roll_and_intervals,
+    y=px,
+    by=c("date","market")
+  )
+  
 

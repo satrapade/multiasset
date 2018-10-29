@@ -454,16 +454,18 @@ plot(g)
   roll_intervals<-data.table(
     start=c(min(shedule$date),roll_dates$date),
     end=c(roll_dates$date,max(shedule$date)),
-    type=c("pre",as.character(seq_along(1:(nrow(roll_dates)-1))),"post")
+    roll=c("pre",as.character(seq_along(1:(nrow(roll_dates)-1))),"post")
   )
 
   
   shedule_with_roll<-data.table(
     shedule,
-    roll=findInterval(shedule$date,roll_intervals$date) #res3$roll[findInterval(shedule$date,res3$date)]
-  )
+    roll=roll_intervals$roll[findInterval(shedule$date,roll_intervals$start)]
+  )[,.SD,keyby=roll]
   
-  res4<-res3[,.SD,keyby=roll][shedule_with_roll[,.SD,keyby=roll]][roll>0][,.(
+  merge(x=shedule_with_roll,y=roll_intervals,by="roll")
+  
+  [,.(
     roll=roll,
     date=i.date,
     start=start,

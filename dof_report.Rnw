@@ -412,15 +412,10 @@ make_backtest<-function(
     maturity=options$maturity,
     reval=options$premium/options$strike_close
   )[,c(.SD,list(
-    cash=cumsum(ifelse(
-      start==date,
-      -reval,
-      0
-    )+ifelse(
-      maturity==1,
-      reval,
-      0
-    )),
+    consideration=ifelse(start==date,-reval,0),
+    payout=ifelse(maturity==1,reval,0)
+  ))][,c(.SD,list(
+    cash=cumsum(consideration+payout),
     holdings=ifelse(maturity==1,0,reval)
   ))][,.(
     market,
@@ -429,6 +424,10 @@ make_backtest<-function(
     end,
     maturity,
     reval,
+    consideration,
+    payout,
+    cash,
+    holdings,
     pnl=cash+holdings
   )]
 

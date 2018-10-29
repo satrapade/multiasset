@@ -158,7 +158,7 @@ make_roll_dates<-function(filter_list,vsurfs){
   ndx<-sort(unique(res1$date))
   res2<-res1[J(ndx),.SD,mult="first"]
   
-  relevant_shedule<-shedule[date_df$pday<max(res2$pday)]
+  relevant_shedule<-shedule #[date_df$pday<max(res2$pday)]
   
   res3<-data.table(
     head(res2,-1),

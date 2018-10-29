@@ -27,7 +27,7 @@ make_shedule<-function(volsurfs)
 }
 
 # create a roll schedule from a shedule
-make_roll_dates<-function(filter_list,vsurfs){
+make_roll_dates_new<-function(filter_list,vsurfs){
   
    
   shedule<-make_shedule(vsurfs)
@@ -49,16 +49,14 @@ make_roll_dates<-function(filter_list,vsurfs){
   ndx<-sort(unique(res1$date))
   res2<-res1[J(ndx),.SD,mult="first"]
   
-  relevant_shedule<-shedule[date_df$pday<max(res2$pday)]
-  
   res3<-data.table(
-    head(res2,-1),
-    start=head(res2$date,-1),
-    end=tail(res2$date,-1),
-    roll=seq.int(nrow(res2)-1)
+    res2,
+    start=shedule$date[res2$pday],
+    end=shedule$date[c(res2$pday[-1],nrow(shedule))],
+    roll=1:nrow(res2)
   )
   
-  shedule_with_roll<-data.table(relevant_shedule,roll=findInterval(relevant_shedule$date,res3$date))
+  shedule_with_roll<-data.table(shedule,roll=findInterval(shedule$date,res3$date))
   
   res4<-res3[,.SD,keyby=roll][shedule_with_roll[,.SD,keyby=roll]][roll>0][,.(
     roll=roll,
@@ -80,6 +78,54 @@ make_roll_dates<-function(filter_list,vsurfs){
   res5
 
 }
+
+# create a roll schedule from a shedule
+make_roll_dates<-function(filter_list,vsurfs){
+  
+  shedule<-make_shedule(vsurfs)
+  
+  date_df<-data.table(
+    date=shedule$date,
+    day=day(shedule$date),
+    mday=mday(shedule$date),
+    qday=qday(shedule$date),
+    yday=yday(shedule$date),
+    pday=seq_along(shedule$date),
+    wday=weekdays(shedule$date),
+    month=months(shedule$date),
+    wday_count=ceiling(mday(shedule$date)/7)
+  )[,.SD,keyby=date]
+  
+  res0<-Reduce(function(a,b)eval(bquote(.(a)[.(b)])),filter_list,init=date_df)
+  res1<-res0[,.SD,keyby=date]
+  ndx<-sort(unique(res1$date))
+  res2<-res1[J(ndx),.SD,mult="first"]
+  res3<-data.table(
+    res2,
+    start=shedule$date[res2$pday],
+    end=shedule$date[c(res2$pday[-1],nrow(shedule))],
+    roll=1:nrow(res2)
+  )
+  shedule_with_roll<-data.table(shedule,roll=findInterval(shedule$date,res3$date))
+  res4<-res3[,.SD,keyby=roll][shedule_with_roll[,.SD,keyby=roll]][roll>0][,.(
+    roll=roll,
+    date=i.date,
+    start=start,
+    end=end,
+    market=market,
+    maturity=as.integer(end-i.date)
+  )]
+  px<-vsurfs[,.(
+      date=as.Date(stri_sub(Date[1],1,10),format="%Y-%m-%d"),
+      close=ClosePrice[1],
+      vol=mean(ImpliedVol)
+  ),keyby=c("market","Date"),][,.(date,market,close,vol)]
+  
+  res5<-px[,.SD,keyby=c("date","market")][res4[,.SD,keyby=c("date","market")]]
+  
+  res5
+}
+
 
 #
 # interpolate vols
@@ -358,12 +404,24 @@ synthetic_shedule<-make_roll_dates(
   vsurfs=synthetic_vol
 )
 
-x<-make_strategy(
-   strategy=list(
-      leg1=list(model=EC,strike=function(close,vol,maturity){ close*0.95 },weight=(+1))
-    ),
-    shedule=synthetic_shedule,
-    volsurf=synthetic_vol
+ss<-make_roll_dates_new(
+  filter_list=listed_expiries_3m,
+  vsurfs=synthetic_vol
 )
+
+strat<-list(leg1=list(model=EC,strike=function(close,vol,maturity){ close*0.95 },weight=(+1)))
+
+x<-rbind(
+  data.table(make_strategy(strategy=strat,shedule=ss,volsurf=synthetic_vol),what="new"),
+  data.table(make_strategy(strategy=strat,shedule=synthetic_shedule,volsurf=synthetic_vol),what="old")
+)
+
+g<- x %>% 
+ggplot() +
+geom_line(aes(x=date,y=pnl,col=what),size=2,alpha=0.75)+
+ggtitle("Long 95 CALL")
+
+plot(g)
+
 
 

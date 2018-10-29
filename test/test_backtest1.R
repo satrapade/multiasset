@@ -452,9 +452,10 @@ plot(g)
   )[,.SD,keyby=date][J(sort(unique(date))),.SD,mult="first"]
 
   roll_intervals<-data.table(
-    date=c(min(shedule$date),roll_dates$date,max(shedule$date)),
-    type=c("pre",as.character(seq_along(roll_dates$date)),"post")
-  )[,.SD,keyby=date]
+    start=c(min(shedule$date),roll_dates$date),
+    end=c(roll_dates$date,max(shedule$date)),
+    type=c("pre",as.character(seq_along(1:(nrow(roll_dates)-1))),"post")
+  )
 
   
   shedule_with_roll<-data.table(

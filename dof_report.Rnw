@@ -463,7 +463,8 @@ make_strategy<-function(
   
   data.table(
     date=bk[[1]]$date,
-    pnl=strat_res[,1]
+    pnl=strat_res[,1],
+    roll=shedule[market==market[1],][,.SD,keyby=date][J(bk[[1]]$date),roll]
   )
   
 }
@@ -768,20 +769,6 @@ all_backtests_3m<-data.table(
 ))][,c(.SD,list(
   plot=mapply(make_backtest_plot,backtest=backtest,the_market=market,the_strategy=strategy)
 ))]
-
-x<-data.table(
-  strategy=rep(names(strategies),times=length(markets)),
-  market=rep(markets,each=length(strategies))
-)[,c(.SD,list(
-  backtest=mapply(function(the_market,the_strategy){
-    make_strategy(
-      strategy=strategies[[the_strategy]],
-      shedule_6m_a[market==the_market],
-      all_vol[market==the_market]
-    )
-  },market,strategy,SIMPLIFY=FALSE)
-))]
-
 
 all_backtests_6m_a<-data.table(
   strategy=rep(names(strategies),times=length(markets)),

@@ -306,8 +306,27 @@ combinations<-data.table(
   title="combinations table:",
   scale="1.0"
 )}
+
+
+\newpage
+\section{Computing a sorting permutation matrix from ranks}
+
+\vskip 5mm
+
+\noindent It is sometimes useful to express sorting operations in the form of permutation matrices. We use dense element
+ranks as column indices into the diagonal matrix to form the permutation matrix.
+
+<<,cache=FALSE, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE, results="hide">>=
+set.seed(0)
+x<-rnorm(100)
+m<-diag(length(x))[,frank(x,ties.method = "dense")]
+res<-drop(m%*%cbind(x))
+@
+
+\vskip 5mm
+
+\begin{center}
+\Sexpr{make_plot(plot(res),width="10cm",height="10cm")}
+\end{center}
+
 \end{document}
-
-
-
-

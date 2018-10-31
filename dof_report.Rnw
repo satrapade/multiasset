@@ -470,6 +470,32 @@ make_strategy<-function(
   
 }
 
+#
+# add stop-loss to strategy
+#
+stop_loss<-function(strategy,max_loss=(-0.05)){
+  period_change<-c(TRUE,tail(strategy$roll,-1)!=head(strategy$roll,-1))
+  squelched_seq_along<-seq_along(period_change)*period_change
+  carry_fwd_seq_along<-cummax(squelched_seq_along)
+  carry_fwd_pnl<-strategy$pnl[carry_fwd_seq_along]
+  period_pnl<-strategy$pnl-carry_fwd_pnl
+  below_stop<-period_pnl<max_loss
+  cum_period_stop<-cumsum(below_stop)
+  period_below_stop<-(cum_period_stop-cum_period_stop[carry_fwd_seq_along])>0
+  pnl_diff<-c(strategy$pnl[1],diff(strategy$pnl))
+  lagged_stop<-c(FALSE,period_below_stop[-1])
+  stopped_pnl_diff<-pnl_diff*(!lagged_stop)
+  stopped_pnl<-cumsum(stopped_pnl_diff)
+  data.table(
+    strategy,
+    period=carry_fwd_seq_along,
+    period_pnl=period_pnl,
+    below_stop=below_stop,
+    period_stop=period_below_stop,
+    stopped_pnl=stopped_pnl
+  )
+}
+
 dof<-fread("dof.csv")
 dof$Date<-as.Date(dof$Date,format="%Y-%m-%d")
 dof$PnL<-cumsum(dof$PnL)
@@ -748,12 +774,14 @@ make_backtest_plot<-function(
 
 <<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
 
-# make_strategy(
-#   strategy=strategies[[1]],
-#   shedule=shedule_3m[market=="spx"],
-#   volsurf=all_vol[market=="spx"]
-# )
-# 
+x<-make_strategy(
+  strategy=strategies[[1]],
+  shedule=shedule_3m[market=="spx"],
+  volsurf=all_vol[market=="spx"]
+)
+
+
+
 
 
 all_backtests_3m<-data.table(
@@ -770,20 +798,6 @@ all_backtests_3m<-data.table(
 ))][,c(.SD,list(
   plot=mapply(make_backtest_plot,backtest=backtest,the_market=market,the_strategy=strategy)
 ))]
-
-x<-data.table(
-  strategy=rep(names(strategies),times=length(markets)),
-  market=rep(markets,each=length(strategies))
-)[,c(.SD,list(
-  backtest=mapply(function(the_market,the_strategy){
-    make_strategy(
-      strategy=strategies[[the_strategy]],
-      shedule_6m_a[market==the_market],
-      all_vol[market==the_market]
-    )
-  },market,strategy,SIMPLIFY=FALSE)
-))]
-
 
 all_backtests_6m_a<-data.table(
   strategy=rep(names(strategies),times=length(markets)),

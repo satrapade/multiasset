@@ -464,7 +464,8 @@ make_strategy<-function(
   
   data.table(
     date=bk[[1]]$date,
-    pnl=strat_res[,1]
+    pnl=strat_res[,1],
+    roll=shedule[market==market[1],][,.SD,keyby=date][J(bk[[1]]$date),roll]
   )
   
 }
@@ -927,7 +928,8 @@ We wish to investigate the cause of infrequent, relatively large drawdowns.
 
 equal_backtest<-data.table(
   date=all_backtests_3m$backtest[[1]]$date,
-  pnl=rowMeans(do.call(cbind,mapply(function(b)b$pnl,all_backtests_3m$backtest,SIMPLIFY=FALSE)))
+  pnl=rowMeans(do.call(cbind,mapply(function(b)b$pnl,all_backtests_3m$backtest,SIMPLIFY=FALSE))),
+  roll=all_backtests_3m$backtest[[1]]$roll
 )
 
 g_equal<-melt(merge(
@@ -977,7 +979,8 @@ theoretical_backtest<-data.table(
   date=all_backtests_3m$backtest[[1]]$date,
   pnl=local({
     drop(backtest_matrix %*% cbind(theoretical_weights[all_backtests_3m$strategy] %>% {./sum(.)}))
-  })
+  }),
+  roll=all_backtests_3m$backtest[[1]]$roll
 )
 
 g_theoretical<-melt(merge(
@@ -1040,7 +1043,8 @@ historical_backtest<-data.table(
   date=all_backtests_3m$backtest[[1]]$date,
   pnl=local({
     drop(backtest_matrix %*% cbind(historical_weights[all_backtests_3m$strategy] %>% {./sum(.)}))
-  })
+  }),
+  roll=all_backtests_3m$backtest[[1]]$roll
 )
 
 g_historical<-melt(merge(
@@ -1639,6 +1643,5 @@ the backtest engine is working as expected.
 
 
 \end{document}
-
 
 

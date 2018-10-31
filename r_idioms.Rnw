@@ -40,8 +40,31 @@ source("https://raw.githubusercontent.com/satrapade/latex_utils/master/latex_hel
 
 \vskip 5mm
 
-\noindent We often need to modify a vector by replacing some of its elements with preceding values, based on
-some criterion. There are 2 ways to accomplish this:
+
+
+<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
+set.seed(0)
+x<-runif(15)*100
+@
+\begin{center}
+\begin{tabular}{l | \Sexpr{paste0(rep("l",length(x)),collapse=" ")}}
+\rowcolor{gray!20}
+\hline
+\multicolumn{\Sexpr{length(x)+1}}{c}{An example of the ``carry forward'' problem} \\
+{\tt seq\_along} & \Sexpr{paste0(seq_along(x),collapse=" & ")} \\
+values & \Sexpr{paste0(round(x,digits=1),collapse=" & ")} \\
+value $>$ 50 & \Sexpr{paste0(ifelse(x>50,"T","F"),collapse=" & ")} \\
+\end{tabular}
+\end{center}
+
+
+\vskip 5mm
+
+\noindent In the situarion depicted above, we sometimes wish to replace values for which a condition (in the example shown 
+above, ``value $>$ 50'') is {\tt FALSE} with the most recent value for which that same condition was {\tt TRUE}, moving 
+from left to right. This is the ``carry forward'' problem. For example, we might want to fill {\bf NA} values with the 
+last valid observation in a time-series of measurments. Because this problem occurs frequently, we need a fast formula for this. 
+R loops would be way too slow.
 
 \begin{itemize}
 \item We can compute the result directly using the {\tt rep} function with the vector version of 
@@ -353,5 +376,8 @@ x_moving_average<-(tail(x_sum,-10)-head(x_sum,-10))/10
   lines(tail(x,-10),col="red")
 ),width="10cm",height="10cm")}
 \end{center}
+
+\newpage
+\section{The period stop-loss problem}
 
 \end{document}

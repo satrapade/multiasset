@@ -496,9 +496,14 @@ stop_loss<-function(strategy,max_loss=(-0.05)){
   )
 }
 
-dof<-fread("dof.csv")
-dof$Date<-as.Date(dof$Date,format="%Y-%m-%d")
-dof$PnL<-cumsum(dof$PnL)
+# read DOF performance, 
+# convert character to Date
+# convert daily P&L to cummulative P&L
+dof<- fread("dof.csv") %>% 
+{setNames(.,tolower(names(.)))} %>%
+{.$date<-as.Date(.$date,format="%Y-%m-%d"); .} %>%
+{.$pnl<-cumsum(.$pnl); .}
+
 
 shedule_3m<-make_roll_dates(
   filter_list=listed_expiries_3m,
@@ -769,6 +774,7 @@ make_backtest_plot<-function(
   plot_latex
   
 }
+
 @
 
 
@@ -902,41 +908,78 @@ backtest_6m_b_plot_matrix<-NNcast(
 
 
 <<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
-g_dof<-dof %>% 
-  ggplot() +
-  geom_line(aes(x=Date,y=PnL))
+
+compute_drawdown_stats<-function(strategy){
+  cum_max_px <- cummax(strategy$pnl)
+  high_watermark <- (strategy$pnl==cum_max_px)
+  squelched_seq_along<-seq_along(high_watermark)*high_watermark
+  carry_fwd_seq_along<-cummax(squelched_seq_along)
+  carry_fwd_pnl<-strategy$pnl[carry_fwd_seq_along]
+  drawdown<-carry_fwd_pnl-strategy$pnl
+  
+  res<-data.table(
+    strategy,
+    drawdown=drawdown,
+    high_watermark_value=carry_fwd_pnl,
+    high_watermark_count=cumsum(high_watermark)
+  )
+  
+  setkey(res,high_watermark_count)
+  
+  res_stats<-res[,list(
+    max_draw=max(drawdown),
+    length_draw=length(drawdown),
+    date_draw=date[which.max(drawdown)]
+  ),keyby=high_watermark_count]
+  
+  res_stats[res]
+  
+}
+
+dof_drawdown_stats<-compute_drawdown_stats(dof)
+
+g_dof <- dof %>% 
+ggplot() +
+geom_line(aes(x=date,y=pnl))
+
+g_drawdown <- dof_drawdown_stats %>%
+ggplot() +
+geom_line(aes(x=date,y=drawdown))
+
+
+
+
+
 @
+
 
 \newpage
 \section{DOF performance}
 
 \begin{center}
-\Sexpr{make_plot(plot(g_dof),height="15cm",width="15cm")}
+\begin{tabular}{m{10cm} m{10cm}}
+\hline
+\rowcolor{gray!20}
+\multicolumn{1}{c}{\bf Performance}
+&
+\multicolumn{1}{c}{\bf Drawdown}
+\\
+\Sexpr{make_plot(plot(g_dof),height="10cm",width="10cm")}
+&
+\Sexpr{make_plot(plot(g_drawdown),height="10cm",width="10cm")}
+\\
+\end{tabular}
 \end{center}
 
-We wish to investigate the cause of infrequent, relatively large drawdowns.
+\begin{itemize}
+\item We wish to investigate the cause of infrequent, relatively large drawdowns.
+\item In addition, we are looking for a simple, intuitive proxy that can be used to understand DOF performance.
+\item Moreover, we investigate 3 different mitigation strategies: sizing, stop-loss and a positive tail-risk overlay.
+\end{itemize}
+
 
 \newpage
-\section{Strategy, market backtests, 3m}
-
-\begin{center}
-\Sexpr{matrix2tabular(backtest_3m_plot_matrix)}
-\end{center}
-
-\newpage
-\section{Strategy, market backtests, 6m (Jun, Dec)}
-
-\begin{center}
-\Sexpr{matrix2tabular(backtest_6m_a_plot_matrix)}
-\end{center}
-
-\newpage
-\section{Strategy, market backtests, 6m (Mar, Sep)}
-
-\begin{center}
-\Sexpr{matrix2tabular(backtest_6m_b_plot_matrix)}
-\end{center}
-
+\section{Weighted strategy backtests}
 
 <<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
 
@@ -946,30 +989,44 @@ equal_backtest<-data.table(
   roll=all_backtests_3m$backtest[[1]]$roll
 )
 
+equal_backtest_drawdown_stats<-compute_drawdown_stats(equal_backtest)
+
 g_equal<-melt(merge(
   x=equal_backtest,
   y=dof,
   by.x="date",
-  by.y="Date"
+  by.y="date"
 )[,.(
   date,
-  backtest=cumsum(c(0,diff(pnl)))*mean(diff(PnL))/mean(diff(pnl)),
-  dof=cumsum(c(0,diff(PnL)))
+  backtest=cumsum(c(0,diff(pnl.x)))*mean(diff(pnl.y))/mean(diff(pnl.x)),
+  dof=cumsum(c(0,diff(pnl.y)))
 )],id.vars = "date",measure.vars = c("backtest","dof")) %>% 
   ggplot() +
   geom_line(aes(x=date,y=value,col=variable),size=2,alpha=0.75)+
   ggtitle("Equal-weight all strategies, markets vs DOF")
 
+
+g_equal_drawdown_stats <- rbind(
+  data.table(dof_drawdown_stats[,.(date,drawdown)],strategy="dof"),
+  data.table(equal_backtest_drawdown_stats[date %in% dof$date,.(date,drawdown)],strategy="equal")
+) %>%
+ggplot() +
+geom_line(aes(x=date,y=drawdown,col=strategy),size=2,alpha=0.75)+
+  ggtitle("Equal-weight all strategies, markets vs DOF drawdowns")
+
 @
-\newpage
-\section{All strategies, markets, equal weight}
+\subsection{equal weights}
 
 \begin{center}
-\Sexpr{make_plot(plot(g_equal),height="20cm",width="20cm")}
+\begin{tabular}{m{10cm} m{10cm}}
+\Sexpr{make_plot(plot(g_equal),height="10cm",width="10cm")}
+&
+\Sexpr{make_plot(plot(g_equal_drawdown_stats),height="10cm",width="10cm")}
+\end{tabular}
 \end{center}
 
 \newpage
-\section{Portfolio 1 : Theoretical weights  }
+\subsection{theoretical weights  }
 
 <<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
 
@@ -997,19 +1054,30 @@ theoretical_backtest<-data.table(
   roll=all_backtests_3m$backtest[[1]]$roll
 )
 
+theoretical_backtest_drawdown_stats<-compute_drawdown_stats(theoretical_backtest)
+
 g_theoretical<-melt(merge(
   x=theoretical_backtest,
   y=dof,
   by.x="date",
-  by.y="Date"
+  by.y="date"
 )[,.(
   date,
-  backtest=cumsum(c(0,diff(pnl)))*mean(diff(PnL))/mean(diff(pnl)),
-  dof=cumsum(c(0,diff(PnL)))
+  backtest=cumsum(c(0,diff(pnl.x)))*mean(diff(pnl.y))/mean(diff(pnl.x)),
+  dof=cumsum(c(0,diff(pnl.y)))
 )],id.vars = "date",measure.vars = c("backtest","dof")) %>% 
   ggplot() +
   geom_line(aes(x=date,y=value,col=variable),size=2,alpha=0.75)+
   ggtitle("Theoretical-weight all strategies, markets vs DOF")
+
+g_theoretical_drawdown_stats <- rbind(
+  data.table(dof_drawdown_stats[,.(date,drawdown)],strategy="dof"),
+  data.table(theoretical_backtest_drawdown_stats[date %in% dof$date,.(date,drawdown)],strategy="theoretical")
+) %>%
+ggplot() +
+geom_line(aes(x=date,y=drawdown,col=strategy),size=2,alpha=0.75)+
+  ggtitle("Theoretical-weight all strategies, markets vs DOF drawdowns")
+
 
 @
 
@@ -1028,12 +1096,17 @@ Short Straddles & 33 \% \\
 \end{center}
 
 \begin{center}
-\Sexpr{make_plot(plot(g_theoretical),height="20cm",width="20cm")}
+\begin{tabular}{m{10cm} m{10cm}}
+\Sexpr{make_plot(plot(g_theoretical),height="10cm",width="10cm")}
+&
+\Sexpr{make_plot(plot(g_theoretical_drawdown_stats),height="10cm",width="10cm")}
+\end{tabular}
 \end{center}
 
 
+
 \newpage
-\section{Portfolio 2 : Weights matching average DOF exposure }
+\subsection{historical weights}
 
 <<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
 
@@ -1061,19 +1134,30 @@ historical_backtest<-data.table(
   roll=all_backtests_3m$backtest[[1]]$roll
 )
 
+historical_backtest_drawdown_stats<-compute_drawdown_stats(historical_backtest)
+
 g_historical<-melt(merge(
   x=historical_backtest,
   y=dof,
   by.x="date",
-  by.y="Date"
+  by.y="date"
 )[,.(
   date,
-  backtest=cumsum(c(0,diff(pnl)))*mean(diff(PnL))/mean(diff(pnl)),
-  dof=cumsum(c(0,diff(PnL)))
+  backtest=cumsum(c(0,diff(pnl.x)))*mean(diff(pnl.y))/mean(diff(pnl.x)),
+  dof=cumsum(c(0,diff(pnl.y)))
 )],id.vars = "date",measure.vars = c("backtest","dof")) %>% 
   ggplot() +
   geom_line(aes(x=date,y=value,col=variable),size=2,alpha=0.75)+
   ggtitle("Historical-weight all strategies, markets vs DOF")
+
+g_historical_drawdown_stats <- rbind(
+  data.table(dof_drawdown_stats[,.(date,drawdown)],strategy="dof"),
+  data.table(historical_backtest_drawdown_stats[date %in% dof$date,.(date,drawdown)],strategy="theoretical")
+) %>%
+ggplot() +
+geom_line(aes(x=date,y=drawdown,col=strategy),size=2,alpha=0.75)+
+  ggtitle("Historical-weight all strategies, markets vs DOF drawdowns")
+
 
 @
 
@@ -1092,8 +1176,13 @@ Short Straddles & 16 \% \\
 \end{center}
 
 \begin{center}
-\Sexpr{make_plot(plot(g_historical),height="20cm",width="20cm")}
+\begin{tabular}{m{10cm} m{10cm}}
+\Sexpr{make_plot(plot(g_historical),height="10cm",width="10cm")}
+&
+\Sexpr{make_plot(plot(g_historical_drawdown_stats),height="10cm",width="10cm")}
+\end{tabular}
 \end{center}
+
 
 
 \newpage
@@ -1107,27 +1196,41 @@ spx_90_100_ps_backtest<-make_strategy(
   all_vol[market=="spx"]
 )
 
+spx_90_100_ps_backtest_drawdown_stats<-compute_drawdown_stats(spx_90_100_ps_backtest)
+
 g_spx_90_100_ps<-melt(merge(
   x=spx_90_100_ps_backtest,
   y=dof,
   by.x="date",
-  by.y="Date"
+  by.y="date"
 )[,.(
   date,
-  backtest=cumsum(c(0,diff(pnl)))*mean(diff(PnL))/mean(diff(pnl)),
-  dof=cumsum(c(0,diff(PnL)))
+  backtest=cumsum(c(0,diff(pnl.x)))*mean(diff(pnl.y))/mean(diff(pnl.x)),
+  dof=cumsum(c(0,diff(pnl.y)))
 )],id.vars = "date",measure.vars = c("backtest","dof")) %>% 
   ggplot() +
   geom_line(aes(x=date,y=value,col=variable),size=2,alpha=0.75)+
   ggtitle("Quarterly rolling short 100-90 pct SPX put spreads vs DOF")
 
-
+g_spx_90_100_ps_drawdown_stats <- rbind(
+  data.table(dof_drawdown_stats[,.(date,drawdown)],strategy="dof"),
+  data.table(spx_90_100_ps_backtest_drawdown_stats[date %in% dof$date,.(date,drawdown)],strategy="theoretical")
+) %>%
+ggplot() +
+geom_line(aes(x=date,y=drawdown,col=strategy),size=2,alpha=0.75)+
+  ggtitle("spx_90_100_ps vs DOF drawdowns")
 
 @
 
+\noindent We examine a very simple strategy that seems to have similar drawdown performance with DOF. The
+value of this proxy is that its behaviour is very intuitive and allows for easy judgement of scenario outcomes.
 
 \begin{center}
-\Sexpr{make_plot(plot(g_spx_90_100_ps),height="20cm",width="20cm")}
+\begin{tabular}{m{10cm} m{10cm}}
+\Sexpr{make_plot(plot(g_spx_90_100_ps),height="10cm",width="10cm")}
+&
+\Sexpr{make_plot(plot(g_spx_90_100_ps_drawdown_stats),height="10cm",width="10cm")}
+\end{tabular}
 \end{center}
 
 
@@ -1204,7 +1307,7 @@ x<-merge(
   x=spx_tail2_backtest,
   y=dof,
   by.x="date",
-  by.y="Date"
+  by.y="date"
 )
 
 g_tails<-rbind(
@@ -1220,11 +1323,11 @@ g_tail2_vs_dof<-melt(merge(
   x=spx_tail2_backtest,
   y=dof,
   by.x="date",
-  by.y="Date"
+  by.y="date"
 )[,.(
   date,
-  teeny=cumsum(c(0,diff(pnl))),
-  dof=cumsum(c(0,diff(PnL)))
+  teeny=cumsum(c(0,diff(pnl.x))),
+  dof=cumsum(c(0,diff(pnl.y)))
 )],id.vars = "date",measure.vars = c("teeny","dof")) %>% 
   ggplot() +
   geom_line(aes(x=date,y=value,col=variable),size=2,alpha=0.75)+
@@ -1292,6 +1395,28 @@ g_combined <- combined_backtest %>%
 \Sexpr{make_plot(plot(g_combined),height="20cm",width="20cm")}
 \end{center}
 
+\newpage
+\section{Strategies vs market backtests}
+
+\subsection{3m maturity}
+
+\begin{center}
+\Sexpr{matrix2tabular(backtest_3m_plot_matrix)}
+\end{center}
+
+\newpage
+\subsection{6m (Jun, Dec) maturities}
+
+\begin{center}
+\Sexpr{matrix2tabular(backtest_6m_a_plot_matrix)}
+\end{center}
+
+\newpage
+\subsection{6m (Mar, Sep) maturities}
+
+\begin{center}
+\Sexpr{matrix2tabular(backtest_6m_b_plot_matrix)}
+\end{center}
 
 \newpage
 \section{Dataset}

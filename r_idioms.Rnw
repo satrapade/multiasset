@@ -52,6 +52,8 @@ the {\tt times} argument
 
 \vskip 5mm
 
+\subsection{The solution using {\tt rep}}
+
 \noindent The {\tt rep} function with a vector {\tt times} argument allows us to replicate individual elements
 by arbitrary counts. If sum of {\tt times} is equal to the length of the original vector, we will
 get a result with the same length as the original. 
@@ -87,6 +89,9 @@ rep(x[x%%2==1],times=diff(c(which(x%%2==1),length(x)+1)))
 
 
 \vskip 5mm
+
+\subsection{The solution using {\tt cummax}}
+
 
 \noindent {\tt cummax} naturally carries forward the recent maximum. We can apply a ``mask'' vector
 containing 0 or 1 values to the {\tt seq\_along} vector to get the ``squelched'' {\tt seq\_along}
@@ -186,16 +191,15 @@ res<-data.table(
 ),width="15cm",height="15cm",envir=environment())} 
 \end{center}
 
-
 \newpage
-\section{Resetting sum, version 1}
-
-\vskip 5mm
+\section{The re-setting count problem}
 
 \noindent We sometimes need to count the length over which a condition holds. This is called the {\bf re-setting sum}. For
 example, in the context of some systematic strategies we would like to know how many days ago a signal was triggered.
-Because of frequent use, a vectorized calculation of the {\bf re-setting sum} is needed. One way to do this is to 
-to 
+Because of frequent use, a vectorized calculation of the {\bf re-setting sum} is needed.
+
+\newpage
+\subsection{Re-setting count, solution using {\tt cummax}}
 
 \vskip 5mm
 
@@ -232,7 +236,7 @@ to
 \end{center}
 
 \newpage
-\section{Resetting sum, version 2}
+\subsection{Resetting count, solution using partial {\tt seq\_along} concatenation}
 
 \vskip 5mm
 
@@ -277,7 +281,7 @@ res<-data.table(
 
 
 \newpage
-\section{All combinations of 2 vectors using {\tt rep}}
+\section{The outer produce problem}
 
 \vskip 5mm
 
@@ -309,12 +313,13 @@ combinations<-data.table(
 
 
 \newpage
-\section{Computing a sorting permutation matrix from ranks}
+\section{The sorting permutation matrix problem}
 
 \vskip 5mm
 
-\noindent It is sometimes useful to express sorting operations in the form of permutation matrices. We use dense element
-ranks as column indices into the diagonal matrix to form the permutation matrix.
+\noindent It is sometimes useful to express sorting operations in the form of permutation matrices. The reason
+for this is that we can chain permutations by multiplying the permutation matrices. Dense element ranks are used 
+as column indices into the diagonal matrix to form the permutation matrix.
 
 <<,cache=FALSE, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE, results="hide">>=
 set.seed(0)
@@ -327,6 +332,26 @@ res<-drop(m%*%cbind(x))
 
 \begin{center}
 \Sexpr{make_plot(plot(res),width="10cm",height="10cm")}
+\end{center}
+
+\newpage
+\section{The moving average problem}
+
+\vskip 5mm
+\noindent Moving averages are basic ingredients for signal calculations. We need a fast method for computing these.
+
+<<,cache=FALSE, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE, results="hide">>=
+set.seed(0)
+x<-rnorm(100,mean=0)
+x_sum<-cumsum(x)
+x_moving_average<-(tail(x_sum,-10)-head(x_sum,-10))/10
+@
+
+\begin{center}
+\Sexpr{make_plot(expression(
+  plot(x_moving_average,type="l",ylim=range(x)),
+  lines(tail(x,-10),col="red")
+),width="10cm",height="10cm")}
 \end{center}
 
 \end{document}

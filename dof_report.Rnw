@@ -1089,6 +1089,29 @@ make_backtest_plot<-function(w)rbind(
   ggtitle(paste0(w,"-weight all strategies, markets vs DOF"))
 
 
+#
+#
+#
+make_drawdown_plot <- function(w,stop_level=0.025)rbind(
+  data.table(dof_drawdown_stats[,.(date,drawdown)],strategy="dof"),
+  data.table(
+    compute_drawdown_stats(
+      weighted_strategy(
+        weights=weights[[w]],
+        backtests=all_backtests_3m,
+        stop_level = -abs(stop_level)
+      )[
+      date %in% dof$date,
+      .(date,pnl=(pnl-pnl[1])*sd(diff(dof$pnl))/sd(diff(pnl)))
+    ])[,.(date,drawdown)],
+    strategy=paste0(w)
+  )
+) %>%
+ggplot() +
+geom_line(aes(x=date,y=drawdown,col=strategy),size=2,alpha=0.75) +
+ggtitle(paste0(w,"-weight vs DOF drawdowns, stoploss=",round(100*stop_level,digits=1)))
+
+
 quality_vs_stop_df<-data.table(
   stop_loss=round(100*seq(0,0.2,length.out=25),digits=2),
   sharpe=round(sapply(
@@ -1137,7 +1160,6 @@ we are better off reducing position sizes rather than tightening stops.
 equal_backtest<-weighted_strategy( weights=weights$equal, backtests=all_backtests_3m )
 equal_backtest_drawdown_stats<-compute_drawdown_stats(equal_backtest)
 
-g_equal<-make_backtest_plot("equal")
 
 g_equal_sl<-rbind(
   data.table(stop_loss(equal_backtest[date %in% dof$date],-0.01),stop="01pct"),
@@ -1148,16 +1170,6 @@ g_equal_sl<-rbind(
 ggplot() +
 geom_line(aes(x=date,y=stopped_pnl,col=stop),size=2,alpha=0.75)+
 ggtitle("Equal-weight all strategies, markets with stop-loss levels")
-
-
-g_equal_drawdown_stats <- rbind(
-  data.table(dof_drawdown_stats[,.(date,drawdown)],strategy="dof"),
-  data.table(equal_backtest_drawdown_stats[date %in% dof$date,.(date,drawdown)],strategy="equal")
-) %>%
-ggplot() +
-geom_line(aes(x=date,y=drawdown,col=strategy),size=2,alpha=0.75)+
-  ggtitle("Equal-weight all strategies, markets vs DOF drawdowns")
-
 
 equal_backtest_drawdown_stats_stop<-compute_drawdown_stats(stop_loss(equal_backtest,-0.03)[,pnl:=stopped_pnl])
 
@@ -1176,9 +1188,9 @@ geom_line(aes(x=date,y=drawdown,col=strategy),size=2,alpha=0.75)+
 
 \begin{center}
 \begin{tabular}{m{10cm} m{10cm}}
-\Sexpr{make_plot(plot(g_equal),height="10cm",width="10cm")}
+\Sexpr{make_plot(plot(make_backtest_plot("equal")),height="10cm",width="10cm")}
 &
-\Sexpr{make_plot(plot(g_equal_drawdown_stats),height="10cm",width="10cm")}
+\Sexpr{make_plot(plot(make_drawdown_plot("equal")),height="10cm",width="10cm")}
 \\
 \Sexpr{make_plot(plot(g_equal_sl),height="10cm",width="10cm")}
 &
@@ -1251,9 +1263,9 @@ Short Straddles & 33 \% \\
 
 \begin{center}
 \begin{tabular}{m{10cm} m{10cm}}
-\Sexpr{make_plot(plot(g_theoretical),height="10cm",width="10cm")}
+\Sexpr{make_plot(plot(make_backtest_plot("theoretical")),height="10cm",width="10cm")}
 &
-\Sexpr{make_plot(plot(g_theoretical_drawdown_stats),height="10cm",width="10cm")}
+\Sexpr{make_plot(plot(make_drawdown_plot("theoretical")),height="10cm",width="10cm")}
 \\
 \Sexpr{make_plot(plot(g_theoretical_sl),height="10cm",width="10cm")}
 &
@@ -1346,9 +1358,9 @@ Short Straddles & 16 \% \\
 
 \begin{center}
 \begin{tabular}{m{10cm} m{10cm}}
-\Sexpr{make_plot(plot(g_historical),height="10cm",width="10cm")}
+\Sexpr{make_plot(plot(make_backtest_plot("historical")),height="10cm",width="10cm")}
 &
-\Sexpr{make_plot(plot(g_historical_drawdown_stats),height="10cm",width="10cm")}
+\Sexpr{make_plot(plot(make_drawdown_plot("historical")),height="10cm",width="10cm")}
 \\
 \Sexpr{make_plot(plot(g_historical_sl),height="10cm",width="10cm")}
 &

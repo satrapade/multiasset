@@ -1,5 +1,4 @@
 
-
 \documentclass{article}
 
 
@@ -305,7 +304,7 @@ res<-data.table(
 
 
 \newpage
-\section{The outer produce problem}
+\section{The outer product problem}
 
 \vskip 5mm
 
@@ -381,5 +380,65 @@ x_moving_average<-(tail(x_sum,-10)-head(x_sum,-10))/10
 \newpage
 \section{The period stop-loss problem}
 
-\end{document}
+\newpage
+\section{The drawdown statistics problem}
+<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
+compute_drawdown_stats<-function(strategy){
+  cum_max_px <- cummax(strategy$pnl)
+  high_watermark <- (strategy$pnl==cum_max_px)
+  squelched_seq_along<-seq_along(high_watermark)*high_watermark
+  carry_fwd_seq_along<-cummax(squelched_seq_along)
+  carry_fwd_pnl<-strategy$pnl[carry_fwd_seq_along]
+  drawdown<-carry_fwd_pnl-strategy$pnl
+  
+  res<-data.table(
+    strategy,
+    drawdown=drawdown,
+    high_watermark_value=carry_fwd_pnl,
+    high_watermark_count=cumsum(high_watermark)
+  )
+  
+  setkey(res,high_watermark_count)
+  
+  res_stats<-res[,list(
+    max_draw=max(drawdown),
+    length_draw=length(drawdown),
+    date_draw=date[which.max(drawdown)]
+  ),keyby=high_watermark_count]
+  
+  res_stats[res]
+  
+}
+@
 
+\noindent Drowdown analysis is an importan component of strategy design. A fast calculation of common
+statistics is therefore needed. Drawdown statistics are computed daily, so each stat is a vector
+of values corresponding to a vector of dates, starting at inception and ending at the current date.
+A strategy's history can be seen as being split by high-watermark dates into a series of {\bf drawdown episodes}.
+Every day will belong to a single drawdown episode and episodes ordered by episode start date will cover the
+whole history without gaps. A strategy that trends upwards without downdays will be composed of adjacent 1-day
+episodes each having a drawdown of zero.
+
+\vskip 5mm
+
+\noindent The most common statistics are:
+
+\vskip 5mm
+
+\begin{center}
+\begin{tabular}{l l}
+\hline
+\rowcolor{gray!20}
+\multicolumn{2}{c}{Common drawdown statistics} \\
+{\tt drawdown\_episode} & count of high water-mark dates since inception \\
+{\tt high\_watermark} & NAV at start of current drawdown episode \\
+{\tt drawdown} & distance of current NAV relative to most recent high water-mark \\
+{\tt maximum\_drawdown} & maximum drawdown in the current drawdown episode \\
+{\tt drawdown\_length} & the length, in days, of a completed drawdown episode \\
+{\tt drawdown\_date} & the date on which an episode's maximum drawdown occured \\
+\end{tabular}
+\end{center}
+
+
+
+\end{document}

@@ -470,6 +470,8 @@ make_strategy<-function(
   
 }
 
+
+
 #
 # add stop-loss to strategy
 #
@@ -1006,33 +1008,136 @@ geom_line(aes(x=date,y=drawdown))
 \item Moreover, we investigate 3 different mitigation strategies: sizing, stop-loss and a positive tail-risk overlay.
 \end{itemize}
 
+\newpage
+\section{Conclusions: Stop-loss vs return quality}
+<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
+
+#
+#
+equal_backtest_stop<-function(stop_level)data.table(
+  date=all_backtests_3m$backtest[[1]]$date,
+  pnl=rowMeans(do.call(cbind,mapply(function(b){
+    stop_loss(b,-abs(stop_level))$stopped_pnl
+  },all_backtests_3m$backtest,SIMPLIFY=FALSE))),
+  roll=all_backtests_3m$backtest[[1]]$roll
+)
+
+#
+#
+weighted_strategy<-function(
+  weights=c(CSC=0.33,PSC=0.0,ZCRR=0.0,PR=0.33,CR=0.0,SS=0.33),
+  backtests=all_backtests_3m,
+  stop_level=0.2
+){
+  
+  backtest_matrix<-local({
+    res<-do.call(cbind,mapply(function(b){
+      stop_loss(b,-abs(stop_level))$stopped_pnl
+    },backtests$backtest,SIMPLIFY=FALSE))
+    colnames(res)<-paste0(backtests$market,"|",backtests$strategy)
+    rownames(res)<-as.character(backtests$backtest[[1]]$date,format="%Y-%m-%d")
+    res
+  })
+
+  backtest_df<-data.table(
+    date=backtests$backtest[[1]]$date,
+    pnl=local({
+      res<-drop(backtest_matrix %*% cbind(weights[backtests$strategy] %>% {./sum(.)}))
+      res
+    }),
+    roll=backtests$backtest[[1]]$roll
+  )
+  
+  backtest_df
+  
+}
+
+#
+#
+weights<-list(
+ equal=c(CSC=0.33,PSC=0.0,ZCRR=0.0,PR=0.33,CR=0.0,SS=0.33),
+ theoretical=c(CSC=0.33,PSC=0.0,ZCRR=0.0,PR=0.33,CR=0.0,SS=0.33),
+ historical=c(CSC=0.43,PSC=0.19,ZCRR=0.07,PR=0.15,CR=0.0,SS=0.16)
+)
+
+make_backtest_plot<-function(w)rbind(
+  data.table(dof[,.(date,pnl)],strategy="DOF"),
+  data.table(
+    weighted_strategy(weights=weights[[w]],backtests=all_backtests_3m )[
+      date %in% dof$date,
+      .(date,pnl=(pnl-pnl[1])*sd(diff(dof$pnl))/sd(diff(pnl)))
+    ],
+    strategy="bkt_20"
+  ),
+  data.table(
+    weighted_strategy(weights=weights$equal,backtests=all_backtests_3m, stop_level = 0.03)[
+      date %in% dof$date,
+      .(date, pnl=(pnl-pnl[1])*sd(diff(dof$pnl))/sd(diff(pnl)))
+    ],
+    strategy="bkt_03"
+  ),
+  data.table(
+    weighted_strategy(weights=weights$equal,backtests=all_backtests_3m, stop_level = 0.01)[
+      date %in% dof$date,
+      .(date, pnl=(pnl-pnl[1])*sd(diff(dof$pnl))/sd(diff(pnl)))
+    ],
+    strategy="bkt_01"
+  )
+) %>% 
+  ggplot() +
+  geom_line(aes(x=date,y=pnl,col=strategy),size=2,alpha=0.75)+
+  ggtitle(paste0(w,"-weight all strategies, markets vs DOF"))
+
+
+quality_vs_stop_df<-data.table(
+  stop_loss=round(100*seq(0,0.2,length.out=25),digits=2),
+  sharpe=round(sapply(
+    seq(0,0.2,length.out=25),
+    function(sl)equal_backtest_stop(sl)$pnl %>% {sd(diff(.))/mean(diff(.))/16}
+  ),digits=2),
+  calmar=round(sapply(
+    seq(0,0.2,length.out=25),
+    function(sl)equal_backtest_stop(sl)$pnl %>% {sum(diff(.))/max(cummax(.)-.)}
+  ),digits=2),
+  proxy="equal weight"
+)
+
+
+@
+
+\vskip 5mm 
+
+\begin{center}
+\framebox{\centering\parbox{12.5cm}{``Small positions with wide stops'' are better than ``Large positions with tight stops''}}
+\end{center}
+
+\vskip 5mm 
+
+\noindent In general, we would expect stop-losses to reduce return quality. The intuition behind this expectation is
+that post-selloff rebounds are among the highest-sharpe periods in a risk-premium strategy's life. Stop-losses limit
+drawdowns but also deny us participation in rebounds. On balance, return quality reduction dominates. This means that
+we are better off reducing position sizes rather than tightening stops. 
+
+
+\vskip 5mm
+
+\begin{center}
+\Sexpr{ntable(
+  df=quality_vs_stop_df,
+  title="Return quality vs Stop-loss level"
+)}
+\end{center}
+
 
 \newpage
 \section{Weighted strategy backtests}
 
 <<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
 
-equal_backtest<-data.table(
-  date=all_backtests_3m$backtest[[1]]$date,
-  pnl=rowMeans(do.call(cbind,mapply(function(b)b$pnl,all_backtests_3m$backtest,SIMPLIFY=FALSE))),
-  roll=all_backtests_3m$backtest[[1]]$roll
-)
-
+equal_backtest<-weighted_strategy( weights=weights$equal, backtests=all_backtests_3m )
 equal_backtest_drawdown_stats<-compute_drawdown_stats(equal_backtest)
 
-g_equal<-melt(merge(
-  x=equal_backtest,
-  y=dof,
-  by.x="date",
-  by.y="date"
-)[,.(
-  date,
-  backtest=cumsum(c(0,diff(pnl.x)))*mean(diff(pnl.y))/mean(diff(pnl.x)),
-  dof=cumsum(c(0,diff(pnl.y)))
-)],id.vars = "date",measure.vars = c("backtest","dof")) %>% 
-  ggplot() +
-  geom_line(aes(x=date,y=value,col=variable),size=2,alpha=0.75)+
-  ggtitle("Equal-weight all strategies, markets vs DOF")
+g_equal<-make_backtest_plot("equal")
 
 g_equal_sl<-rbind(
   data.table(stop_loss(equal_backtest[date %in% dof$date],-0.01),stop="01pct"),
@@ -1091,45 +1196,11 @@ geom_line(aes(x=date,y=drawdown,col=strategy),size=2,alpha=0.75)+
 
 <<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
 
-theoretical_weights<-c(
-  CSC=0.33,
-  PSC=0.0,
-  ZCRR=0.0,
-  PR=0.33,
-  CR=0.0,
-  SS=0.33
-)
-
-backtest_matrix<-local({
-    res<-do.call(cbind,mapply(function(b)b$pnl,all_backtests_3m$backtest,SIMPLIFY=FALSE))
-    colnames(res)<-paste0(all_backtests_3m$market,"|",all_backtests_3m$strategy)
-    rownames(res)<-as.character(all_backtests_3m$backtest[[1]]$date,format="%Y-%m-%d")
-    res
-  })
-
-theoretical_backtest<-data.table(
-  date=all_backtests_3m$backtest[[1]]$date,
-  pnl=local({
-    drop(backtest_matrix %*% cbind(theoretical_weights[all_backtests_3m$strategy] %>% {./sum(.)}))
-  }),
-  roll=all_backtests_3m$backtest[[1]]$roll
-)
-
+theoretical_backtest<-weighted_strategy( weights=weights$theoretical, backtests=all_backtests_3m)
 theoretical_backtest_drawdown_stats<-compute_drawdown_stats(theoretical_backtest)
 
-g_theoretical<-melt(merge(
-  x=theoretical_backtest,
-  y=dof,
-  by.x="date",
-  by.y="date"
-)[,.(
-  date,
-  backtest=cumsum(c(0,diff(pnl.x)))*mean(diff(pnl.y))/mean(diff(pnl.x)),
-  dof=cumsum(c(0,diff(pnl.y)))
-)],id.vars = "date",measure.vars = c("backtest","dof")) %>% 
-  ggplot() +
-  geom_line(aes(x=date,y=value,col=variable),size=2,alpha=0.75)+
-  ggtitle("Theoretical-weight all strategies, markets vs DOF")
+g_theoretical<-make_backtest_plot("theoretical")
+
 
 g_theoretical_sl<-rbind(
   data.table(stop_loss(theoretical_backtest[date %in% dof$date],-0.01),stop="01pct"),
@@ -1198,45 +1269,10 @@ Short Straddles & 33 \% \\
 
 <<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
 
-historical_weights<-c(
-  CSC=0.43,
-  PSC=0.19,
-  ZCRR=0.07,
-  PR=0.15,
-  CR=0.0,
-  SS=0.16
-)
-
-backtest_matrix<-local({
-    res<-do.call(cbind,mapply(function(b)b$pnl,all_backtests_3m$backtest,SIMPLIFY=FALSE))
-    colnames(res)<-paste0(all_backtests_3m$market,"|",all_backtests_3m$strategy)
-    rownames(res)<-as.character(all_backtests_3m$backtest[[1]]$date,format="%Y-%m-%d")
-    res
-  })
-
-historical_backtest<-data.table(
-  date=all_backtests_3m$backtest[[1]]$date,
-  pnl=local({
-    drop(backtest_matrix %*% cbind(historical_weights[all_backtests_3m$strategy] %>% {./sum(.)}))
-  }),
-  roll=all_backtests_3m$backtest[[1]]$roll
-)
-
+historical_backtest<-weighted_strategy(weights=weights$historical, backtests=all_backtests_3m)
 historical_backtest_drawdown_stats<-compute_drawdown_stats(historical_backtest)
 
-g_historical<-melt(merge(
-  x=historical_backtest,
-  y=dof,
-  by.x="date",
-  by.y="date"
-)[,.(
-  date,
-  backtest=cumsum(c(0,diff(pnl.x)))*mean(diff(pnl.y))/mean(diff(pnl.x)),
-  dof=cumsum(c(0,diff(pnl.y)))
-)],id.vars = "date",measure.vars = c("backtest","dof")) %>% 
-  ggplot() +
-  geom_line(aes(x=date,y=value,col=variable),size=2,alpha=0.75)+
-  ggtitle("Historical-weight all strategies, markets vs DOF")
+g_historical<-make_backtest_plot("historical")
 
 g_historical_sl<-rbind(
   data.table(stop_loss(historical_backtest[date %in% dof$date],-0.01),stop="01pct"),

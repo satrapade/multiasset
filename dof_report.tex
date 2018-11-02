@@ -1,54 +1,5 @@
-\documentclass{article}\usepackage[]{graphicx}\usepackage[]{color}
-%% maxwidth is the original width if it is less than linewidth
-%% otherwise use linewidth (to make sure the graphics do not exceed the margin)
-\makeatletter
-\def\maxwidth{ %
-  \ifdim\Gin@nat@width>\linewidth
-    \linewidth
-  \else
-    \Gin@nat@width
-  \fi
-}
-\makeatother
-
-\definecolor{fgcolor}{rgb}{0.345, 0.345, 0.345}
-\newcommand{\hlnum}[1]{\textcolor[rgb]{0.686,0.059,0.569}{#1}}%
-\newcommand{\hlstr}[1]{\textcolor[rgb]{0.192,0.494,0.8}{#1}}%
-\newcommand{\hlcom}[1]{\textcolor[rgb]{0.678,0.584,0.686}{\textit{#1}}}%
-\newcommand{\hlopt}[1]{\textcolor[rgb]{0,0,0}{#1}}%
-\newcommand{\hlstd}[1]{\textcolor[rgb]{0.345,0.345,0.345}{#1}}%
-\newcommand{\hlkwa}[1]{\textcolor[rgb]{0.161,0.373,0.58}{\textbf{#1}}}%
-\newcommand{\hlkwb}[1]{\textcolor[rgb]{0.69,0.353,0.396}{#1}}%
-\newcommand{\hlkwc}[1]{\textcolor[rgb]{0.333,0.667,0.333}{#1}}%
-\newcommand{\hlkwd}[1]{\textcolor[rgb]{0.737,0.353,0.396}{\textbf{#1}}}%
-\let\hlipl\hlkwb
-
-\usepackage{framed}
-\makeatletter
-\newenvironment{kframe}{%
- \def\at@end@of@kframe{}%
- \ifinner\ifhmode%
-  \def\at@end@of@kframe{\end{minipage}}%
-  \begin{minipage}{\columnwidth}%
- \fi\fi%
- \def\FrameCommand##1{\hskip\@totalleftmargin \hskip-\fboxsep
- \colorbox{shadecolor}{##1}\hskip-\fboxsep
-     % There is no \\@totalrightmargin, so:
-     \hskip-\linewidth \hskip-\@totalleftmargin \hskip\columnwidth}%
- \MakeFramed {\advance\hsize-\width
-   \@totalleftmargin\z@ \linewidth\hsize
-   \@setminipage}}%
- {\par\unskip\endMakeFramed%
- \at@end@of@kframe}
-\makeatother
-
-\definecolor{shadecolor}{rgb}{.97, .97, .97}
-\definecolor{messagecolor}{rgb}{0, 0, 0}
-\definecolor{warningcolor}{rgb}{1, 0, 1}
-\definecolor{errorcolor}{rgb}{1, 0, 0}
-\newenvironment{knitrout}{}{} % an empty environment to be redefined in TeX
-
-\usepackage{alltt}
+<<<<<<< HEAD
+\documentclass{article}
 
 
 \usepackage[portrait, headheight = 0cm, margin=0.25cm, top = 0.25cm]{geometry} 
@@ -68,56 +19,59 @@
 \DeclareRobustCommand\Tstrut{\rule{0pt}{2.6ex}}         % = `top' strut
 \DeclareRobustCommand\Bstrut{\rule[-0.9ex]{0pt}{0pt}}   % = `bottom' strut
 \renewcommand{\familydefault}{\sfdefault}
-\IfFileExists{upquote.sty}{\usepackage{upquote}}{}
+
+
 \begin{document}
 
 
+\begin{knitrout}
+\definecolor{shadecolor}{rgb}{0.969, 0.969, 0.969}\color{fgcolor}\begin{kframe}
+
+
+{\ttfamily\noindent\bfseries\color{errorcolor}{\#\# Error in file(file, "{}r"{}): cannot open the connection}}
+
+{\ttfamily\noindent\bfseries\color{errorcolor}{\#\# Error in file(file, "{}r"{}): cannot open the connection}}
+
+{\ttfamily\noindent\bfseries\color{errorcolor}{\#\# Error in file(file, "{}r"{}): cannot open the connection}}
+
+{\ttfamily\noindent\bfseries\color{errorcolor}{\#\# Error in file(file, "{}r"{}): cannot open the connection}}
+
+{\ttfamily\noindent\bfseries\color{errorcolor}{\#\# Error in data.table(resampled\_spx\_vol, market = "{}spx"{}): object 'resampled\_spx\_vol' not found}}
+
+{\ttfamily\noindent\bfseries\color{errorcolor}{\#\# Error in eval(expr, envir, enclos): object 'all\_vol' not found}}
+
+{\ttfamily\noindent\bfseries\color{errorcolor}{\#\# Error in eval(expr, envir, enclos): object 'all\_vol' not found}}
+
+{\ttfamily\noindent\bfseries\color{errorcolor}{\#\# Error in make\_common\_dates(volsurfs): object 'all\_vol' not found}}
+
+{\ttfamily\noindent\bfseries\color{errorcolor}{\#\# Error in merge(x = shedule, y = compute\_option\_premium(shedule, all\_vol, : object 'shedule' not found}}
+
+{\ttfamily\noindent\bfseries\color{errorcolor}{\#\# Error in merge(x = shedule[market == "{}spx"{}], y = compute\_option\_premium(shedule[market == : object 'shedule' not found}}
+
+{\ttfamily\noindent\bfseries\color{errorcolor}{\#\# Error in eval(lhs, parent, parent): object 'shedule' not found}}
+
+{\ttfamily\noindent\bfseries\color{errorcolor}{\#\# Error in eval(lhs, parent, parent): object 'shedule' not found}}\end{kframe}
+\end{knitrout}
 
 
 
-\tableofcontents
-
-\newpage
-\section{DOF performance}
-
-\begin{center}
-\begin{minipage}[t][ 15cm ][t]{ 15cm }
-\includegraphics[height=15cm,width=15cm,valign=T]{/Users/nicknassuphis/Documents/GitHub/multiasset/figure/plot28a7698c5a2.pdf}
-\end{minipage}
-\end{center}
-
-We wish to investigate the cause of infrequent, relatively large drawdowns.
-
-\newpage
-\section{Dataset}
-
-We use historical volatility surfaces from JPM's OptionMetrics database.
-
-\begin{tabular}{m{10cm}m{10cm}}
-\begin{minipage}[t][ 10cm ][t]{ 10cm }
-\includegraphics[height=10cm,width=10cm,valign=T]{/Users/nicknassuphis/Documents/GitHub/multiasset/figure/plot28a279e583d.pdf}
-\end{minipage}
-&
-\begin{minipage}[t][ 10cm ][t]{ 10cm }
-\includegraphics[height=10cm,width=10cm,valign=T]{/Users/nicknassuphis/Documents/GitHub/multiasset/figure/plot28a4442fd6e.pdf}
-\end{minipage}
-\end{tabular}
 
 
 
 
-\newpage
-\section{Backtest}
 
 
 
-\begin{center}
-\begin{minipage}[t][ 15cm ][t]{ 15cm }
-\includegraphics[height=15cm,width=15cm,valign=T]{/Users/nicknassuphis/Documents/GitHub/multiasset/figure/plot28a7c44ec44.pdf}
-\end{minipage}
-\end{center}
 
 
 
-\end{document}
+
+
+
+
+
+
+
+
+
 

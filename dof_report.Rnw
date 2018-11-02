@@ -1,422 +1,5 @@
-<<<<<<< HEAD
-\documentclass{article}
 
 
-\usepackage[portrait, headheight = 0cm, margin=0.25cm, top = 0.25cm]{geometry} 
-\usepackage[export]{adjustbox} 
-\usepackage{graphicx}
-\usepackage[dvipsnames,table]{xcolor} % [dvipsnames,table] for setting colors \usepackage{amsmath} \usepackage{xfrac}
-\usepackage{tikz}
-\usetikzlibrary{shapes.geometric}
-\usetikzlibrary{shapes.misc}
-%\usetikzlibrary{external}
-%\tikzexternalize % activate!
-%\usepackage{sparklines}
-\usepackage{xfrac}
-\usepackage[space]{grffile}
-\usepackage{hyperref}
-
-\DeclareRobustCommand\Tstrut{\rule{0pt}{2.6ex}}         % = `top' strut
-\DeclareRobustCommand\Bstrut{\rule[-0.9ex]{0pt}{0pt}}   % = `bottom' strut
-\renewcommand{\familydefault}{\sfdefault}
-
-
-\begin{document}
-
-
-<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
-
-source("https://raw.githubusercontent.com/satrapade/latex_utils/master/latex_helpers_v2.R")
-
-source("https://raw.githubusercontent.com/satrapade/utility/master/utility_functions.R")
-
-require(data.table)
-require(scales)
-require(RcppRoll)
-require(magrittr)
-require(fasttime)
-require(lubridate)
-require(scales)
-require(fields)
-require(gsubfn)
-require(stringi)
-require(Matrix)
-require(akima)
-require(ggplot2)
-
-resampled_spx_vol<-"compressed_resampled_spx_vol.txt" %>% scan(character()) %>% decompress
-resampled_ndx_vol<-"compressed_resampled_ndx_vol.txt" %>% scan(character()) %>% decompress
-resampled_dax_vol<-"compressed_resampled_dax_vol.txt" %>% scan(character()) %>% decompress
-resampled_sx5e_vol<-"compressed_resampled_sx5e_vol.txt" %>% scan(character()) %>% decompress
-
-all_vol<-rbind( # data.table with all volatilities
-  data.table(resampled_spx_vol,market="spx"),
-  data.table(resampled_ndx_vol,market="ndx"),
-  data.table(resampled_dax_vol,market="dax"),
-  data.table(resampled_sx5e_vol,market="sx5e")
-)[,.(
-    Date=as.Date(stri_sub(Date,1,10),format="%Y-%m-%d"),
-    Strike=Strike,
-    Days=Days,
-    ImpliedVol=ImpliedVol,
-    ClosePrice=ClosePrice,
-    market=market
-)][,
-  .(
-    Strike=Strike,
-    Days=Days,
-    ImpliedVol=ImpliedVol,
-    ClosePrice=ClosePrice,
-    market=market,
-    market_count=length(market)
-  ),
-  keyby=Date
-][ClosePrice>0]
-
-# surface pillars
-all_strikes<-all_vol[,.(strikes=sort(unique(Strike))),keyby=market]
-all_maturities<-all_vol[,.(maturities=sort(unique(Days))),keyby=market]
-
-listed_expiries<-list(
-    quote(month %in% c("March","June","September","December")),
-    quote(wday=="Friday"),
-    quote(wday_count==3)
-)
-
-
-#
-# get common dates for all markets 
-# in volsurface table
-make_common_dates<-function(vsurfs){
-  vsurfs[
-    ,.(date=Date[1]),
-    keyby=c("market","Date")
-  ][
-    ,.(markets=length(market)),keyby=date
-  ][
-    markets==max(markets),date
-  ]
-}
-
-
-#
-# make a shedule from a list of volatility surfaces
-make_shedule<-function(volsurfs)
-{
-  common_dates<-make_common_dates(volsurfs)
-  markets<-sort(unique(volsurfs$market))
-  shedule_df <- data.table(
-    date=rep(common_dates,times=length(markets)),
-    market=rep(markets,each=length(common_dates))
-  )
-  shedule_df
-}
-
-# create a roll schedule from a shedule
-make_roll_dates<-function(filter_list,vsurfs){
-  
-  shedule<-make_shedule(vsurfs)
-  
-  date_df<-data.table(
-    date=shedule$date,
-    day=day(shedule$date),
-    mday=mday(shedule$date),
-    qday=qday(shedule$date),
-    yday=yday(shedule$date),
-    pday=seq_along(shedule$date),
-    wday=weekdays(shedule$date),
-    month=months(shedule$date),
-    wday_count=ceiling(mday(shedule$date)/7)
-  )[,.SD,keyby=date]
-  
-  res0<-Reduce(function(a,b)eval(bquote(.(a)[.(b)])),filter_list,init=date_df)
-  res1<-res0[,.SD,keyby=date]
-  ndx<-sort(unique(res1$date))
-  res2<-res1[J(ndx),.SD,mult="first"]
-  res3<-data.table(
-    res2,
-    start=shedule$date[res2$pday],
-    end=shedule$date[c(res2$pday[-1],nrow(shedule))],
-    roll=1:nrow(res2)
-  )
-  shedule_with_roll<-data.table(shedule,roll=findInterval(shedule$date,res3$date))
-  res4<-res3[,.SD,keyby=roll][shedule_with_roll[,.SD,keyby=roll]][roll>0][,.(
-    roll=roll,
-    date=i.date,
-    start=start,
-    end=end,
-    market=market,
-    maturity=as.integer(end-i.date)
-  )]
-  px<-all_vol[,.(
-      date=as.Date(stri_sub(Date[1],1,10),format="%Y-%m-%d"),
-      close=ClosePrice[1],
-      vol=mean(ImpliedVol)
-  ),keyby=c("market","Date"),][,.(date,market,close,vol)]
-  
-  res5<-px[,.SD,keyby=c("date","market")][res4[,.SD,keyby=c("date","market")]]
-  
-  res5
-}
-
-#
-# interpolate vols
-# on resampled vol surface
-#
-interpolate_vol<-function(date,strike,days,vsurf)
-{
-  strikes<-sort(unique(vsurf$Strike))
-  maturities<-sort(unique(vsurf$Days))
-  option_dets<-data.table(
-    date=date,
-    lo_strike=strikes[findInterval(strike,strikes)],
-    hi_strike=strikes[findInterval(strike,strikes)+1],
-    lo_mat=maturities[findInterval(days,maturities)],
-    hi_mat=maturities[findInterval(days,maturities)+1]
-  )
-  vol_ll<-merge(x=option_dets,y=vsurf,by.x=c("date","lo_strike","lo_mat"),by.y=c("Date","Strike","Days"))$ImpliedVol
-  vol_lh<-merge(x=option_dets,y=vsurf,by.x=c("date","lo_strike","hi_mat"),by.y=c("Date","Strike","Days"))$ImpliedVol
-  vol_hl<-merge(x=option_dets,y=vsurf,by.x=c("date","hi_strike","lo_mat"),by.y=c("Date","Strike","Days"))$ImpliedVol
-  vol_hh<-merge(x=option_dets,y=vsurf,by.x=c("date","hi_strike","hi_mat"),by.y=c("Date","Strike","Days"))$ImpliedVol
-  t_strike<-(strike-option_dets$lo_strike)/(option_dets$hi_strike-option_dets$lo_strike)
-  t_mat<-(days-option_dets$lo_mat)/(option_dets$hi_mat-option_dets$lo_mat)
-  rowSums(cbind(
-    vol_ll*(1-t_strike)*(1-t_mat),
-    vol_hl*(t_strike)*(1-t_mat),
-    vol_lh*(1-t_strike)*(t_mat),
-    vol_hh*(t_strike)*(t_mat)
-  ))
-}
-
-shedule<-make_roll_dates(
-  filter_list=listed_expiries,
-  vsurfs=all_vol
-)
-
-# option models
-
-EC <- function(S,X,t,r,v)
-{
-  d1 <- (log(S/X)+(r+0.5*v^2)*t)/(v*sqrt(t))
-  d2 <- d1-v*sqrt(t)
-  S*pnorm(d1)-X*exp(-r*t)*pnorm(d2)
-}
-
-
-EP  <- function(S,X,t,r,v)
-{
-  d1 <- (log(S/X)+(r+0.5*v^2)*t)/(v*sqrt(t))
-  d2 <- d1-v*sqrt(t)
-  X*exp(-r*t)*pnorm(-d2)-S*pnorm(-d1)
-}
-
-#
-#
-#
-compute_option_premium<-function(
-  shedule,
-  all_vol,
-  strike_fun=function(close)close,
-  model=EC
-)merge(
-  x=shedule[date==start,.(market,strike=strike_fun(close),roll)],
-  y=shedule[,.(date,market,close,roll,maturity)],
-  by.x=c("market","roll"),
-  by.y=c("market","roll")
-)[,
-  local({
-    the_strikes<-all_strikes[market,strikes]
-    the_maturities<-all_maturities[market,maturities]
-    i<-findInterval(pmax(strike,0),the_strikes)
-    j<-findInterval(pmax(maturity,0),the_maturities)
-    dets<-data.table(
-      date=date,
-      market=market,
-      lo_strike=the_strikes[i],
-      hi_strike=the_strikes[i+1],
-      lo_maturity=the_maturities[j],
-      hi_maturity=the_maturities[j+1]
-    )
-    vol_ll<-merge(
-      x=dets,
-      y=all_vol,
-      by.x=c("market","date","lo_strike","lo_maturity"),
-      by.y=c("market","Date","Strike","Days")
-    )$ImpliedVol
-    vol_lh<-merge(
-      x=dets,
-      y=all_vol,
-      by.x=c("market","date","lo_strike","hi_maturity"),
-      by.y=c("market","Date","Strike","Days")
-    )$ImpliedVol
-    vol_hl<-merge(
-      x=dets,
-      y=all_vol,
-      by.x=c("market","date","hi_strike","lo_maturity"),
-      by.y=c("market","Date","Strike","Days")
-    )$ImpliedVol
-    vol_hh<-merge(
-      x=dets,
-      y=all_vol,
-      by.x=c("market","date","hi_strike","hi_maturity"),
-      by.y=c("market","Date","Strike","Days")
-    )$ImpliedVol
-    t_strike<-(strike-dets$lo_strike)/(dets$hi_strike-dets$lo_strike)
-    t_mat<-(maturity-dets$lo_maturity)/(dets$hi_maturity-dets$lo_maturity)
-    vol<-rowSums(cbind(
-      vol_ll*(1-t_strike)*(1-t_mat),
-      vol_hl*(t_strike)*(1-t_mat),
-      vol_lh*(1-t_strike)*(t_mat),
-      vol_hh*(t_strike)*(t_mat)
-    ))
-    premium<-model(close, strike, maturity/365, 0,vol)
-    list(date=date,strike=strike,strike_maturity=maturity,strike_vol=vol,premium=premium)
-  }),
-  keyby=market
-]
-
-
-system.time(backtest1<-merge(
-  x=shedule,
-  y=compute_option_premium(
-    shedule,
-    all_vol,
-    strike_fun=identity,
-    model=EC
-  )[,.(market,date,strike,strike_vol,premium)],
-  by.x=c("date","market"),
-  by.y=c("date","market")
-))
-
-system.time(backtest2<-merge(
-  x=shedule[market=="spx"],
-  y=compute_option_premium(
-    shedule[market=="spx"],
-    all_vol[market=="spx"],
-    strike_fun=function(x)x*0.9,
-    model=EP
-  )[,.(market,date,strike,strike_vol,premium)],
-  by.x=c("date","market"),
-  by.y=c("date","market")
-))
-
-g1<-shedule %>% 
-  ggplot() +
-  geom_line(aes(x=date,y=close,col=market)) +
-  ggtitle("Market closing prices")
-
-
-
-g2<-shedule %>% 
-  ggplot() +
-  geom_line(aes(x=date,y=vol,col=market)) +
-  ggtitle("Market average volatility")
-
-
-dof<-fread("dof.csv")
-dof$Date<-as.Date(dof$Date,format="%Y-%m-%d")
-dof$PnL<-cumsum(dof$PnL)
-
-g3<-dof %>% 
-  ggplot() +
-  geom_line(aes(x=Date,y=PnL))
-
-
-
-
-@
-
-
-\tableofcontents
-
-\newpage
-\section{DOF performance}
-
-\begin{center}
-\Sexpr{make_plot(plot(g3),height="15cm",width="15cm")}
-\end{center}
-
-We wish to investigate the cause of infrequent, relatively large drawdowns.
-
-\newpage
-\section{Dataset}
-
-We use historical volatility surfaces from JPM's OptionMetrics database.
-
-\begin{tabular}{m{10cm}m{10cm}}
-\Sexpr{make_plot(plot(g1),height="10cm",width="10cm")}
-&
-\Sexpr{make_plot(plot(g2),height="10cm",width="10cm")}
-\end{tabular}
-
-
-<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
-system.time(backtest2<-merge(
-  x=shedule[market=="spx"],
-  y=compute_option_premium(
-    shedule[market=="spx"],
-    all_vol[market=="spx"],
-    strike_fun=function(x)x*0.9,
-    model=EP
-  )[,.(market,date,strike,strike_vol,premium)],
-  by.x=c("date","market"),
-  by.y=c("date","market")
-))
-
-system.time(backtest3<-merge(
-  x=shedule[market=="spx"],
-  y=compute_option_premium(
-    shedule[market=="spx"],
-    all_vol[market=="spx"],
-    strike_fun=function(x)x*1.0,
-    model=EP
-  )[,.(market,date,strike,strike_vol,premium)],
-  by.x=c("date","market"),
-  by.y=c("date","market")
-))
-
-backtest<-data.table(
-  market=backtest3$market,
-  date=backtest2$date,
-  start=backtest2$start,
-  end=backtest2$end,
-  maturity=backtest2$maturity,
-  intrinsic=backtest2$strike-backtest3$strike,
-  reval=backtest2$premium-backtest3$premium
-)[,c(.SD,list(
-  cash=cumsum(ifelse(
-    start==date,
-    -reval,
-    0
-  )+ifelse(
-    maturity==1,
-    reval,
-    0
-  )),
-  holdings=ifelse(maturity==1,0,reval)
-))]
-
-g4<-backtest %>% 
-  ggplot() +
-  geom_line(aes(x=date,y=cash+holdings))+
-  ggtitle("Quarterly rolling short 100-90 pct SPX put spreads")
-
-@
-
-\newpage
-\section{Backtest}
-
-
-
-\begin{center}
-\Sexpr{make_plot(plot(g4),height="15cm",width="15cm")}
-\end{center}
-
-
-
-\end{document}
-
-=======
 \documentclass{article}
 
 
@@ -555,10 +138,11 @@ make_shedule<-function(volsurfs)
 }
 
 # create a roll schedule from a shedule
-make_roll_dates<-function(filter_list,vsurfs){
-  
+make_roll_dates<-function(
+  filter_list,
+  vsurfs
+){
   shedule<-make_shedule(vsurfs)
-  
   date_df<-data.table(
     date=shedule$date,
     day=day(shedule$date),
@@ -571,34 +155,47 @@ make_roll_dates<-function(filter_list,vsurfs){
     wday_count=ceiling(mday(shedule$date)/7)
   )[,.SD,keyby=date]
   
-  res0<-Reduce(function(a,b)eval(bquote(.(a)[.(b)])),filter_list,init=date_df)
-  res1<-res0[,.SD,keyby=date]
-  ndx<-sort(unique(res1$date))
-  res2<-res1[J(ndx),.SD,mult="first"]
-  res3<-data.table(
-    res2,
-    start=shedule$date[res2$pday],
-    end=shedule$date[c(res2$pday[-1],nrow(shedule))],
-    roll=1:nrow(res2)
+  roll_dates<-Reduce(
+    function(a,b)eval(bquote(.(a)[.(b)])),
+    filter_list,
+    init=date_df
+  )[,.SD,keyby=date][J(sort(unique(date))),.SD,mult="first"]
+  
+  roll_intervals<-data.table(
+    start=c(min(shedule$date),roll_dates$date),
+    end=c(roll_dates$date,max(shedule$date)),
+    roll=c("pre",as.character(seq_along(1:(nrow(roll_dates)-1))),"post")
   )
-  shedule_with_roll<-data.table(shedule,roll=findInterval(shedule$date,res3$date))
-  res4<-res3[,.SD,keyby=roll][shedule_with_roll[,.SD,keyby=roll]][roll>0][,.(
-    roll=roll,
-    date=i.date,
-    start=start,
-    end=end,
-    market=market,
-    maturity=as.integer(end-i.date)
-  )]
-  px<-all_vol[,.(
-      date=as.Date(stri_sub(Date[1],1,10),format="%Y-%m-%d"),
-      close=ClosePrice[1],
-      vol=mean(ImpliedVol)
-  ),keyby=c("market","Date"),][,.(date,market,close,vol)]
   
-  res5<-px[,.SD,keyby=c("date","market")][res4[,.SD,keyby=c("date","market")]]
   
-  res5
+  shedule_with_roll<-data.table(
+    shedule,
+    roll=roll_intervals$roll[findInterval(shedule$date,roll_intervals$start)]
+  )[,.SD,keyby=roll]
+  
+  shedule_with_roll_and_intervals<-merge(
+    x=shedule_with_roll,
+    y=roll_intervals,
+    by="roll"
+  )[,.SD,keyby=date]
+  
+  
+  px<-vsurfs[,.(
+    date=as.Date(stri_sub(Date[1],1,10),format="%Y-%m-%d"),
+    close=ClosePrice[1],
+    vol=mean(ImpliedVol)
+  ),keyby=c("market","Date"),][,.(date,market,close,vol)][,.SD,keyby=c("date","market")]
+  
+  shedule_with_price<-merge(
+    x=shedule_with_roll_and_intervals,
+    y=px,
+    by=c("date","market")
+  )
+  
+  shedule_with_price[,c(.SD,list(
+    maturity=as.integer(end-date)
+  ))]
+
 }
 
 #
@@ -630,38 +227,37 @@ interpolate_vol<-function(date,strike,days,vsurf)
   ))
 }
 
-shedule_3m<-make_roll_dates(
-  filter_list=listed_expiries_3m,
-  vsurfs=all_vol
-)
 
-shedule_6m_a<-make_roll_dates(
-  filter_list=listed_expiries_6m_a,
-  vsurfs=all_vol
-)
-
-shedule_6m_b<-make_roll_dates(
-  filter_list=listed_expiries_6m_b,
-  vsurfs=all_vol
-)
 
 # option models
 
 # european call
 EC <- function(S,X,t,r,v)
 {
-  d1 <- (log(S/X)+(r+0.5*v^2)*t)/(v*sqrt(t))
-  d2 <- d1-v*sqrt(t)
-  S*pnorm(d1)-X*exp(-r*t)*pnorm(d2)
+  ifelse(
+    t<1e-10,
+    pmax(S-X,0),
+    local({
+      d1 <- (log(S/X)+(r+0.5*v^2)*t)/(v*sqrt(t))
+      d2 <- d1-v*sqrt(t)
+      S*pnorm(d1)-X*exp(-r*t)*pnorm(d2)
+    })
+  )
 }
 
 
 # european put
 EP  <- function(S,X,t,r,v)
 {
-  d1 <- (log(S/X)+(r+0.5*v^2)*t)/(v*sqrt(t))
-  d2 <- d1-v*sqrt(t)
-  X*exp(-r*t)*pnorm(-d2)-S*pnorm(-d1)
+  ifelse(
+    t<1e-10,
+    pmax(X-S,0),
+    local({
+      d1 <- (log(S/X)+(r+0.5*v^2)*t)/(v*sqrt(t))
+      d2 <- d1-v*sqrt(t)
+      X*exp(-r*t)*pnorm(-d2)-S*pnorm(-d1)
+    })
+  )
 }
 
 
@@ -710,7 +306,9 @@ compute_option_premium<-function(
   shedule,
   all_vol,
   strike_fun=function(close,vol,maturity)close,
-  model=EC
+  model=EC,
+  all_strikes=all_vol[,.(strikes=sort(unique(Strike))),keyby=market],
+  all_maturities=all_vol[,.(maturities=sort(unique(Days))),keyby=market]
 )merge(
   x=shedule[date==start,.(
     market,
@@ -768,7 +366,7 @@ compute_option_premium<-function(
       vol_lh*(1-t_strike)*(t_mat),
       vol_hh*(t_strike)*(t_mat)
     ))
-    premium<-model(close, strike, maturity/365, 0,vol)
+    premium<-ifelse(grepl("^[0-9]+$",roll),model(close, strike, maturity/365, 0,vol),0)
     list(
       date=date,
       strike_close=strike_close,
@@ -781,6 +379,7 @@ compute_option_premium<-function(
   }),
   keyby=market
 ]
+
 
 #
 #
@@ -817,15 +416,10 @@ make_backtest<-function(
     maturity=options$maturity,
     reval=options$premium/options$strike_close
   )[,c(.SD,list(
-    cash=cumsum(ifelse(
-      start==date,
-      -reval,
-      0
-    )+ifelse(
-      maturity==1,
-      reval,
-      0
-    )),
+    consideration=ifelse(start==date,-reval,0),
+    payout=ifelse(maturity==1,reval,0)
+  ))][,c(.SD,list(
+    cash=cumsum(consideration+payout),
     holdings=ifelse(maturity==1,0,reval)
   ))][,.(
     market,
@@ -834,6 +428,10 @@ make_backtest<-function(
     end,
     maturity,
     reval,
+    consideration,
+    payout,
+    cash,
+    holdings,
     pnl=cash+holdings
   )]
 
@@ -867,14 +465,92 @@ make_strategy<-function(
   
   data.table(
     date=bk[[1]]$date,
-    pnl=strat_res[,1]
+    pnl=strat_res[,1],
+    roll=shedule[market==market[1],][,.SD,keyby=date][J(bk[[1]]$date),roll]
   )
   
 }
 
-dof<-fread("dof.csv")
-dof$Date<-as.Date(dof$Date,format="%Y-%m-%d")
-dof$PnL<-cumsum(dof$PnL)
+#
+# add stop-loss to strategy
+#
+stop_loss<-function(strategy,max_loss=(-0.05)){
+  period_change<-c(TRUE,tail(strategy$roll,-1)!=head(strategy$roll,-1))
+  squelched_seq_along<-seq_along(period_change)*period_change
+  carry_fwd_seq_along<-cummax(squelched_seq_along)
+  carry_fwd_pnl<-strategy$pnl[carry_fwd_seq_along]
+  period_pnl<-strategy$pnl-carry_fwd_pnl
+  below_stop<-period_pnl<max_loss
+  cum_period_stop<-cumsum(below_stop)
+  period_below_stop<-(cum_period_stop-cum_period_stop[carry_fwd_seq_along])>0
+  pnl_diff<-c(strategy$pnl[1],diff(strategy$pnl))
+  lagged_stop<-c(FALSE,period_below_stop[-1])
+  stopped_pnl_diff<-pnl_diff*(!lagged_stop)
+  stopped_pnl<-cumsum(stopped_pnl_diff)
+  data.table(
+    strategy,
+    period=carry_fwd_seq_along,
+    period_pnl=period_pnl,
+    below_stop=below_stop,
+    period_stop=period_below_stop,
+    stopped_pnl=stopped_pnl
+  )
+}
+
+#
+# drawdown stats
+#
+compute_drawdown_stats<-function(strategy){
+  cum_max_px <- cummax(strategy$pnl)
+  high_watermark <- (strategy$pnl==cum_max_px)
+  squelched_seq_along<-seq_along(high_watermark)*high_watermark
+  carry_fwd_seq_along<-cummax(squelched_seq_along)
+  carry_fwd_pnl<-strategy$pnl[carry_fwd_seq_along]
+  drawdown<-carry_fwd_pnl-strategy$pnl
+  
+  res<-data.table(
+    strategy,
+    drawdown=drawdown,
+    high_watermark_value=carry_fwd_pnl,
+    high_watermark_count=cumsum(high_watermark)
+  )
+  
+  setkey(res,high_watermark_count)
+  
+  res_stats<-res[,list(
+    max_draw=max(drawdown),
+    length_draw=length(drawdown),
+    date_draw=date[which.max(drawdown)]
+  ),keyby=high_watermark_count]
+  
+  res_stats[res]
+  
+}
+
+
+# read DOF performance, 
+# convert character to Date
+# convert daily P&L to cummulative P&L
+dof<- fread("dof.csv") %>% 
+{setNames(.,tolower(names(.)))} %>%
+{.$date<-as.Date(.$date,format="%Y-%m-%d"); .} %>%
+{.$pnl<-cumsum(.$pnl); .}
+
+
+shedule_3m<-make_roll_dates(
+  filter_list=listed_expiries_3m,
+  vsurfs=all_vol
+)
+
+shedule_6m_a<-make_roll_dates(
+  filter_list=listed_expiries_6m_a,
+  vsurfs=all_vol
+)
+
+shedule_6m_b<-make_roll_dates(
+  filter_list=listed_expiries_6m_b,
+  vsurfs=all_vol
+)
 
 @
 
@@ -1055,6 +731,21 @@ strategy_ZCRR<-list(
   )
 )
 
+########################################
+# TAIL2, 2 delta P
+########################################
+strategy_TAIL2<-list(
+  leg1=list(
+    model=EP,
+    strike=function(close,vol,maturity){ 
+      put_K<-D2PK(0.02,close,vol,maturity/365)
+      put_K
+    },
+    weight=(+1)
+  )
+)
+
+
 
 #
 # list of strategies
@@ -1115,6 +806,20 @@ make_backtest_plot<-function(
   plot_latex
   
 }
+
+@
+
+
+<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
+
+x<-make_strategy(
+  strategy=strategies[[1]],
+  shedule=shedule_3m[market=="spx"],
+  volsurf=all_vol[market=="spx"]
+)
+
+
+
 
 
 all_backtests_3m<-data.table(
@@ -1232,76 +937,135 @@ backtest_6m_b_plot_matrix<-NNcast(
 
 \tableofcontents
 
+\newpage
+
+\section*{Document version}
+<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
+require(digest)
+require(Hmisc)
+@
+\vskip 5mm
+
+\begin{center}
+\begin{tabular}{l l}
+\hline
+timestamp & \Sexpr{latexTranslate(as.character(Sys.timeDate()))} \\
+data and code checksum & \Sexpr{digest(all_vol)} \\
+git id & \Sexpr{system("git rev-parse HEAD",TRUE)} \\
+user & \Sexpr{latexTranslate(gsub("\\\\","/",system("whoami",TRUE)))} \\
+\hline
+\end{tabular}
+\end{center}
 
 
 <<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
-g_dof<-dof %>% 
-  ggplot() +
-  geom_line(aes(x=Date,y=PnL))
+
+
+dof_drawdown_stats<-compute_drawdown_stats(dof)
+
+g_dof <- dof %>% 
+ggplot() +
+geom_line(aes(x=date,y=pnl))
+
+g_drawdown <- dof_drawdown_stats %>%
+ggplot() +
+geom_line(aes(x=date,y=drawdown))
+
+
+
+
+
 @
+
 
 \newpage
 \section{DOF performance}
 
 \begin{center}
-\Sexpr{make_plot(plot(g_dof),height="15cm",width="15cm")}
+\begin{tabular}{m{10cm} m{10cm}}
+\hline
+\rowcolor{gray!20}
+\multicolumn{1}{c}{\bf Performance}
+&
+\multicolumn{1}{c}{\bf Drawdown}
+\\
+\Sexpr{make_plot(plot(g_dof),height="10cm",width="10cm")}
+&
+\Sexpr{make_plot(plot(g_drawdown),height="10cm",width="10cm")}
+\\
+\end{tabular}
 \end{center}
 
-We wish to investigate the cause of infrequent, relatively large drawdowns.
+\begin{itemize}
+\item We wish to investigate the cause of infrequent, relatively large drawdowns.
+\item In addition, we are looking for a simple, intuitive proxy that can be used to understand DOF performance.
+\item Moreover, we investigate 3 different mitigation strategies: sizing, stop-loss and a positive tail-risk overlay.
+\end{itemize}
+
 
 \newpage
-\section{Strategy, market backtests, 3m}
-
-\begin{center}
-\Sexpr{matrix2tabular(backtest_3m_plot_matrix)}
-\end{center}
-
-\newpage
-\section{Strategy, market backtests, 6m (Jun, Dec)}
-
-\begin{center}
-\Sexpr{matrix2tabular(backtest_6m_a_plot_matrix)}
-\end{center}
-
-\newpage
-\section{Strategy, market backtests, 6m (Mar, Sep)}
-
-\begin{center}
-\Sexpr{matrix2tabular(backtest_6m_b_plot_matrix)}
-\end{center}
-
+\section{Weighted strategy backtests}
 
 <<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
 
 equal_backtest<-data.table(
   date=all_backtests_3m$backtest[[1]]$date,
-  pnl=rowMeans(do.call(cbind,mapply(function(b)b$pnl,all_backtests_3m$backtest,SIMPLIFY=FALSE)))
+  pnl=rowMeans(do.call(cbind,mapply(function(b)b$pnl,all_backtests_3m$backtest,SIMPLIFY=FALSE))),
+  roll=all_backtests_3m$backtest[[1]]$roll
 )
+
+equal_backtest_drawdown_stats<-compute_drawdown_stats(equal_backtest)
 
 g_equal<-melt(merge(
   x=equal_backtest,
   y=dof,
   by.x="date",
-  by.y="Date"
+  by.y="date"
 )[,.(
   date,
-  backtest=cumsum(c(0,diff(pnl)))*mean(diff(PnL))/mean(diff(pnl)),
-  dof=cumsum(c(0,diff(PnL)))
+  backtest=cumsum(c(0,diff(pnl.x)))*mean(diff(pnl.y))/mean(diff(pnl.x)),
+  dof=cumsum(c(0,diff(pnl.y)))
 )],id.vars = "date",measure.vars = c("backtest","dof")) %>% 
   ggplot() +
   geom_line(aes(x=date,y=value,col=variable),size=2,alpha=0.75)+
   ggtitle("Equal-weight all strategies, markets vs DOF")
 
+g_equal_sl<-rbind(
+  data.table(stop_loss(equal_backtest[date %in% dof$date],-0.01),stop="01pct"),
+  data.table(stop_loss(equal_backtest[date %in% dof$date],-0.03),stop="03pct"),
+  data.table(stop_loss(equal_backtest[date %in% dof$date],-0.05),stop="05pct"),
+  data.table(stop_loss(equal_backtest[date %in% dof$date],-0.10),stop="10pct")
+)%>%
+ggplot() +
+geom_line(aes(x=date,y=stopped_pnl,col=stop),size=2,alpha=0.75)+
+ggtitle("Equal-weight all strategies, markets with stop-loss levels")
+
+
+g_equal_drawdown_stats <- rbind(
+  data.table(dof_drawdown_stats[,.(date,drawdown)],strategy="dof"),
+  data.table(equal_backtest_drawdown_stats[date %in% dof$date,.(date,drawdown)],strategy="equal")
+) %>%
+ggplot() +
+geom_line(aes(x=date,y=drawdown,col=strategy),size=2,alpha=0.75)+
+  ggtitle("Equal-weight all strategies, markets vs DOF drawdowns")
+
 @
-\newpage
-\section{All strategies, markets, equal weight}
+\subsection{equal weights}
 
 \begin{center}
-\Sexpr{make_plot(plot(g_equal),height="20cm",width="20cm")}
+\begin{tabular}{m{10cm} m{10cm}}
+\Sexpr{make_plot(plot(g_equal),height="10cm",width="10cm")}
+&
+\Sexpr{make_plot(plot(g_equal_drawdown_stats),height="10cm",width="10cm")}
+\\
+\Sexpr{make_plot(plot(g_equal_sl),height="10cm",width="10cm")}
+&
+\\
+\end{tabular}
 \end{center}
 
 \newpage
-\section{Portfolio 1 : Theoretical weights  }
+\subsection{theoretical weights  }
 
 <<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
 
@@ -1325,22 +1089,45 @@ theoretical_backtest<-data.table(
   date=all_backtests_3m$backtest[[1]]$date,
   pnl=local({
     drop(backtest_matrix %*% cbind(theoretical_weights[all_backtests_3m$strategy] %>% {./sum(.)}))
-  })
+  }),
+  roll=all_backtests_3m$backtest[[1]]$roll
 )
+
+theoretical_backtest_drawdown_stats<-compute_drawdown_stats(theoretical_backtest)
 
 g_theoretical<-melt(merge(
   x=theoretical_backtest,
   y=dof,
   by.x="date",
-  by.y="Date"
+  by.y="date"
 )[,.(
   date,
-  backtest=cumsum(c(0,diff(pnl)))*mean(diff(PnL))/mean(diff(pnl)),
-  dof=cumsum(c(0,diff(PnL)))
+  backtest=cumsum(c(0,diff(pnl.x)))*mean(diff(pnl.y))/mean(diff(pnl.x)),
+  dof=cumsum(c(0,diff(pnl.y)))
 )],id.vars = "date",measure.vars = c("backtest","dof")) %>% 
   ggplot() +
   geom_line(aes(x=date,y=value,col=variable),size=2,alpha=0.75)+
   ggtitle("Theoretical-weight all strategies, markets vs DOF")
+
+g_theoretical_sl<-rbind(
+  data.table(stop_loss(theoretical_backtest[date %in% dof$date],-0.01),stop="01pct"),
+  data.table(stop_loss(theoretical_backtest[date %in% dof$date],-0.03),stop="03pct"),
+  data.table(stop_loss(theoretical_backtest[date %in% dof$date],-0.05),stop="05pct"),
+  data.table(stop_loss(theoretical_backtest[date %in% dof$date],-0.10),stop="10pct")
+)%>%
+ggplot() +
+geom_line(aes(x=date,y=stopped_pnl,col=stop),size=2,alpha=0.75)+
+ggtitle("Theoretical-weight all strategies, markets with stop-loss levels")
+
+
+g_theoretical_drawdown_stats <- rbind(
+  data.table(dof_drawdown_stats[,.(date,drawdown)],strategy="dof"),
+  data.table(theoretical_backtest_drawdown_stats[date %in% dof$date,.(date,drawdown)],strategy="theoretical")
+) %>%
+ggplot() +
+geom_line(aes(x=date,y=drawdown,col=strategy),size=2,alpha=0.75)+
+  ggtitle("Theoretical-weight all strategies, markets vs DOF drawdowns")
+
 
 @
 
@@ -1359,12 +1146,21 @@ Short Straddles & 33 \% \\
 \end{center}
 
 \begin{center}
-\Sexpr{make_plot(plot(g_theoretical),height="20cm",width="20cm")}
+\begin{tabular}{m{10cm} m{10cm}}
+\Sexpr{make_plot(plot(g_theoretical),height="10cm",width="10cm")}
+&
+\Sexpr{make_plot(plot(g_theoretical_drawdown_stats),height="10cm",width="10cm")}
+\\
+\Sexpr{make_plot(plot(g_theoretical_sl),height="10cm",width="10cm")}
+&
+\\
+\end{tabular}
 \end{center}
 
 
+
 \newpage
-\section{Portfolio 2 : Weights matching average DOF exposure }
+\subsection{historical weights}
 
 <<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
 
@@ -1388,22 +1184,44 @@ historical_backtest<-data.table(
   date=all_backtests_3m$backtest[[1]]$date,
   pnl=local({
     drop(backtest_matrix %*% cbind(historical_weights[all_backtests_3m$strategy] %>% {./sum(.)}))
-  })
+  }),
+  roll=all_backtests_3m$backtest[[1]]$roll
 )
+
+historical_backtest_drawdown_stats<-compute_drawdown_stats(historical_backtest)
 
 g_historical<-melt(merge(
   x=historical_backtest,
   y=dof,
   by.x="date",
-  by.y="Date"
+  by.y="date"
 )[,.(
   date,
-  backtest=cumsum(c(0,diff(pnl)))*mean(diff(PnL))/mean(diff(pnl)),
-  dof=cumsum(c(0,diff(PnL)))
+  backtest=cumsum(c(0,diff(pnl.x)))*mean(diff(pnl.y))/mean(diff(pnl.x)),
+  dof=cumsum(c(0,diff(pnl.y)))
 )],id.vars = "date",measure.vars = c("backtest","dof")) %>% 
   ggplot() +
   geom_line(aes(x=date,y=value,col=variable),size=2,alpha=0.75)+
   ggtitle("Historical-weight all strategies, markets vs DOF")
+
+g_historical_sl<-rbind(
+  data.table(stop_loss(historical_backtest[date %in% dof$date],-0.01),stop="01pct"),
+  data.table(stop_loss(historical_backtest[date %in% dof$date],-0.03),stop="03pct"),
+  data.table(stop_loss(historical_backtest[date %in% dof$date],-0.05),stop="05pct"),
+  data.table(stop_loss(historical_backtest[date %in% dof$date],-0.10),stop="10pct")
+)%>%
+ggplot() +
+geom_line(aes(x=date,y=stopped_pnl,col=stop),size=2,alpha=0.75)+
+ggtitle("Historical-weight all strategies, markets with stop-loss levels")
+
+g_historical_drawdown_stats <- rbind(
+  data.table(dof_drawdown_stats[,.(date,drawdown)],strategy="dof"),
+  data.table(historical_backtest_drawdown_stats[date %in% dof$date,.(date,drawdown)],strategy="theoretical")
+) %>%
+ggplot() +
+geom_line(aes(x=date,y=drawdown,col=strategy),size=2,alpha=0.75)+
+  ggtitle("Historical-weight all strategies, markets vs DOF drawdowns")
+
 
 @
 
@@ -1422,12 +1240,21 @@ Short Straddles & 16 \% \\
 \end{center}
 
 \begin{center}
-\Sexpr{make_plot(plot(g_historical),height="20cm",width="20cm")}
+\begin{tabular}{m{10cm} m{10cm}}
+\Sexpr{make_plot(plot(g_historical),height="10cm",width="10cm")}
+&
+\Sexpr{make_plot(plot(g_historical_drawdown_stats),height="10cm",width="10cm")}
+\\
+\Sexpr{make_plot(plot(g_historical_sl),height="10cm",width="10cm")}
+&
+\\
+\end{tabular}
 \end{center}
 
 
+
 \newpage
-\section{SPX Q90-100 PS vs DOF performance}
+\section{A DOF proxy: SPX Q90-100 PS vs DOF performance}
 
 <<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
 
@@ -1437,27 +1264,200 @@ spx_90_100_ps_backtest<-make_strategy(
   all_vol[market=="spx"]
 )
 
+spx_90_100_ps_backtest_drawdown_stats<-compute_drawdown_stats(spx_90_100_ps_backtest)
+
 g_spx_90_100_ps<-melt(merge(
   x=spx_90_100_ps_backtest,
   y=dof,
   by.x="date",
-  by.y="Date"
+  by.y="date"
 )[,.(
   date,
-  backtest=cumsum(c(0,diff(pnl)))*mean(diff(PnL))/mean(diff(pnl)),
-  dof=cumsum(c(0,diff(PnL)))
+  backtest=cumsum(c(0,diff(pnl.x)))*mean(diff(pnl.y))/mean(diff(pnl.x)),
+  dof=cumsum(c(0,diff(pnl.y)))
 )],id.vars = "date",measure.vars = c("backtest","dof")) %>% 
   ggplot() +
   geom_line(aes(x=date,y=value,col=variable),size=2,alpha=0.75)+
   ggtitle("Quarterly rolling short 100-90 pct SPX put spreads vs DOF")
 
+g_spx_90_100_ps_sl<-rbind(
+  data.table(stop_loss(spx_90_100_ps_backtest[date %in% dof$date],-0.01),stop="01pct"),
+  data.table(stop_loss(spx_90_100_ps_backtest[date %in% dof$date],-0.03),stop="03pct"),
+  data.table(stop_loss(spx_90_100_ps_backtest[date %in% dof$date],-0.05),stop="05pct"),
+  data.table(stop_loss(spx_90_100_ps_backtest[date %in% dof$date],-0.10),stop="10pct")
+)%>%
+ggplot() +
+geom_line(aes(x=date,y=stopped_pnl,col=stop),size=2,alpha=0.75)+
+ggtitle("spx_90_100_ps with stop-loss levels")
+
+
+g_spx_90_100_ps_drawdown_stats <- rbind(
+  data.table(dof_drawdown_stats[,.(date,drawdown)],strategy="dof"),
+  data.table(spx_90_100_ps_backtest_drawdown_stats[date %in% dof$date,.(date,drawdown)],strategy="theoretical")
+) %>%
+ggplot() +
+geom_line(aes(x=date,y=drawdown,col=strategy),size=2,alpha=0.75)+
+  ggtitle("spx_90_100_ps vs DOF drawdowns")
+
+@
+
+\noindent We examine a very simple strategy that seems to have similar drawdown performance with DOF. The
+value of this proxy is that its behaviour is very intuitive and allows for easy judgement of scenario outcomes.
+
+\begin{center}
+\begin{tabular}{m{10cm} m{10cm}}
+\Sexpr{make_plot(plot(g_spx_90_100_ps),height="10cm",width="10cm")}
+&
+\Sexpr{make_plot(plot(g_spx_90_100_ps_drawdown_stats),height="10cm",width="10cm")}
+\\
+\Sexpr{make_plot(plot(g_spx_90_100_ps_sl),height="10cm",width="10cm")}
+&
+\\
+\end{tabular}
+\end{center}
+
+
+\newpage
+\section{Drawdown mitigation: SPX ``teenies''}
+
+<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
+
+########################################
+# TAIL1, 1 delta P
+########################################
+strategy_TAIL1<-list(
+  leg1=list(
+    model=EP,
+    strike=function(close,vol,maturity){ 
+      put_K<-D2PK(0.01,close,vol,maturity/365)
+      put_K
+    },
+    weight=(+1)
+  )
+)
+
+
+########################################
+# TAIL2, 2 delta P
+########################################
+strategy_TAIL2<-list(
+  leg1=list(
+    model=EP,
+    strike=function(close,vol,maturity){ 
+      put_K<-D2PK(0.02,close,vol,maturity/365)
+      put_K
+    },
+    weight=(+1)
+  )
+)
+
+########################################
+# TAIL5, 5 delta P
+########################################
+strategy_TAIL5<-list(
+  leg1=list(
+    model=EP,
+    strike=function(close,vol,maturity){ 
+      put_K<-D2PK(0.05,close,vol,maturity/365)
+      put_K
+    },
+    weight=(+1)
+  )
+)
+
+
+
+spx_tail1_backtest<-make_strategy(
+  strategy=strategy_TAIL1,
+  shedule_3m[market=="spx"],
+  all_vol[market=="spx"]
+)
+
+spx_tail2_backtest<-make_strategy(
+  strategy=strategy_TAIL2,
+  shedule_3m[market=="spx"],
+  all_vol[market=="spx"]
+)
+
+spx_tail5_backtest<-make_strategy(
+  strategy=strategy_TAIL5,
+  shedule_3m[market=="spx"],
+  all_vol[market=="spx"]
+)
+
+
+x<-merge(
+  x=spx_tail2_backtest,
+  y=dof,
+  by.x="date",
+  by.y="date"
+)
+
+g_tails<-rbind(
+  data.table(spx_tail1_backtest,delta="1"),
+  data.table(spx_tail2_backtest,delta="2"),
+  data.table(spx_tail5_backtest,delta="5")
+) %>% 
+  ggplot() +
+  geom_line(aes(x=date,y=pnl,col=delta),size=2,alpha=0.75)+
+  ggtitle("Tail hedges: 1, 2 and 5 deltas")
+
+g_tail2_vs_dof<-melt(merge(
+  x=spx_tail2_backtest,
+  y=dof,
+  by.x="date",
+  by.y="date"
+)[,.(
+  date,
+  teeny=cumsum(c(0,diff(pnl.x))),
+  dof=cumsum(c(0,diff(pnl.y)))
+)],id.vars = "date",measure.vars = c("teeny","dof")) %>% 
+  ggplot() +
+  geom_line(aes(x=date,y=value,col=variable),size=2,alpha=0.75)+
+  ggtitle("Quarterly rolling 2-delta SPX puts vs DOF")
+
+compute_drawdown_stats(dof)[,.(
+  max_draw=max_draw[1],
+  date_draw=date_draw[1]
+),keyby=high_watermark_count][head(order(-max_draw),10)]
+
 
 
 @
 
+\vskip 5mm
+
+\noindent Downside mitigation can be achieved using ``teenies'', i.e. very low delta puts (50 to 300 bps).
+These options almost never pay out anything at settlement. However, their value tends to spike during 
+market-wide bouts of liquidation. We can take advantage of this by holding some amount of these and
+selling them back whever their value spikes by a pre-determined amount. The combined portfolio should
+have smaller returns but much reduced drawdowns. The key to this risk-mitigation strategy is that
+we use a ``stop-profit'' on the tail-protection portfolio rather than a ``stop-loss'' on the risk-premium
+portfolio. The reason this works better than stop-losses is that volatility risk premia are very strongly 
+mean-reverting. It is better to buy tail-risk when the market is calm and then sell volatility on the pop 
+rather than stop-out the risk premium collection portfolio on the pop and buy the volatility highs.
+(tail risk becomes vol risk on a strong selloff, the teenies become 5-10 deltas pretty quickly)
+
+\vskip 5mm
 
 \begin{center}
-\Sexpr{make_plot(plot(g_spx_90_100_ps),height="20cm",width="20cm")}
+\Sexpr{make_plot(plot(g_tail2_vs_dof),height="20cm",width="20cm")}
+\end{center}
+
+\newpage
+
+\vskip 5mm
+
+\noindent The key metric for choosing a tail hedge is the ratio of premium to potential upside. We
+expect to rarely be able to recoup any of the premium, since tail options almost never end up paying
+out anything. From this viewpoint, lower delta options are the best choice. For the examples examined 
+in thise report, 1-delta SPX puts have the best ratio of premium to "price pop" during a selloff. 
+
+\vskip 5mm
+
+
+\begin{center}
+\Sexpr{make_plot(plot(g_tails),height="20cm",width="20cm")}
 \end{center}
 
 \newpage
@@ -1483,6 +1483,28 @@ g_combined <- combined_backtest %>%
 \Sexpr{make_plot(plot(g_combined),height="20cm",width="20cm")}
 \end{center}
 
+\newpage
+\section{Strategies vs market backtests}
+
+\subsection{3m maturity}
+
+\begin{center}
+\Sexpr{matrix2tabular(backtest_3m_plot_matrix)}
+\end{center}
+
+\newpage
+\subsection{6m (Jun, Dec) maturities}
+
+\begin{center}
+\Sexpr{matrix2tabular(backtest_6m_a_plot_matrix)}
+\end{center}
+
+\newpage
+\subsection{6m (Mar, Sep) maturities}
+
+\begin{center}
+\Sexpr{matrix2tabular(backtest_6m_b_plot_matrix)}
+\end{center}
 
 \newpage
 \section{Dataset}
@@ -1733,7 +1755,121 @@ interpolate_vol<-function(date,strike,days,vsurf)
 
 \end{lstlisting}
 
+\newpage
+\subsection{Unit tests}
+<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
+synthetic_vol<-data.table(expand.grid(
+  Date=seq(Sys.Date()-365,Sys.Date(),by=1),
+  Strike=seq(0,300,length.out=10),
+  Days=seq(0,700,length.out=10),
+  ClosePrice=100.0,
+  ImpliedVol=0.1,
+  market="synthetic",
+  market_count=1,
+  stringsAsFactors = FALSE
+))[,.SD,keyby=Date]
+
+synthetic_shedule<-make_roll_dates(
+  filter_list=listed_expiries_3m,
+  vsurfs=synthetic_vol
+)
+
+  
+g_synthetic_90_100_ps_backtest<-make_strategy(
+   strategy=list(
+      leg1=list(model=EP,strike=function(close,vol,maturity){ close*0.9 },weight=(+1)),
+      leg2=list(model=EP,strike=function(close,vol,maturity){ close*1.0 },weight=(-1))
+    ),
+    shedule=synthetic_shedule,
+    volsurf=synthetic_vol
+) %>% 
+ggplot() +
+geom_line(aes(x=date,y=pnl),size=2,alpha=0.75) +
+ggtitle("90-100 PS")
+
+g_synthetic_95_105_CS_backtest<-make_strategy(
+   strategy=list(
+      leg1=list(model=EC,strike=function(close,vol,maturity){ close*0.95 },weight=(+1)),
+      leg2=list(model=EC,strike=function(close,vol,maturity){ close*1.05 },weight=(-1))
+    ),
+    shedule=synthetic_shedule,
+    volsurf=synthetic_vol
+) %>% 
+ggplot() +
+geom_line(aes(x=date,y=pnl),size=2,alpha=0.75)+
+ggtitle("95-105 CS")
+
+g_synthetic_95_C_backtest<-make_strategy(
+   strategy=list(
+      leg1=list(model=EC,strike=function(close,vol,maturity){ close*0.95 },weight=(+1))
+    ),
+    shedule=synthetic_shedule,
+    volsurf=synthetic_vol
+) %>% 
+ggplot() +
+geom_line(aes(x=date,y=pnl),size=2,alpha=0.75)+
+ggtitle("Long 95 CALL")
+
+g_synthetic_105_C_backtest<-make_strategy(
+   strategy=list(
+      leg2=list(model=EC,strike=function(close,vol,maturity){ close*1.05 },weight=(-1))
+    ),
+    shedule=synthetic_shedule,
+    volsurf=synthetic_vol
+) %>% 
+ggplot() +
+geom_line(aes(x=date,y=pnl),size=2,alpha=0.75)+
+ggtitle("Short 105 CALL")
+
+x<-make_backtest(
+  shedule=synthetic_shedule,
+  volsurf=synthetic_vol,
+  model=EC,
+  strike_fun=function(close,vol,maturity){ close*0.95 }
+)
+
+y<-compute_option_premium(
+      shedule=synthetic_shedule,
+      all_vol=synthetic_vol,
+      strike_fun=function(close,vol,maturity){ close*0.95 },
+      model=EC
+)
+
+z<-merge(
+  x=synthetic_shedule[date==start,.(market, strike_close=close, strike_vol=vol, strike=close*0.95, roll)],
+  y=synthetic_shedule[,.(date,market,close,roll,maturity)],
+  by.x=c("market","roll"),
+  by.y=c("market","roll")
+)
+
+@
+
+\vskip 5mm
+
+\noindent We perform a number of backtests for selected strategies on synthetic data to ensure
+the backtest engine is working as expected. 
+
+\vskip 5mm
+
+\begin{center}
+\begin{tabular}{m{10cm} m{10cm}}
+\rowcolor{gray!20}
+\multicolumn{2}{c}{ Synthetic market, constant price at 100, constant vol at 10\% } 
+\\
+\Sexpr{make_plot(plot(g_synthetic_90_100_ps_backtest),height="10cm",width="10cm")}
+&
+\Sexpr{make_plot(plot(g_synthetic_95_105_CS_backtest),height="10cm",width="10cm")}
+\\
+\Sexpr{make_plot(plot(g_synthetic_95_C_backtest),height="10cm",width="10cm")}
+&
+\Sexpr{make_plot(plot(g_synthetic_105_C_backtest),height="10cm",width="10cm")}
+\\
+\end{tabular}
+\end{center}
+
+
+
 \end{document}
 
 
->>>>>>> 53839f5a901a30cffae53d20c5ca3e449f5e976c
+

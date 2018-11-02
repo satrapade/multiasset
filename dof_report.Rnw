@@ -1,5 +1,4 @@
 
-
 \documentclass{article}
 
 
@@ -474,7 +473,10 @@ make_strategy<-function(
 #
 # add stop-loss to strategy
 #
-stop_loss<-function(strategy,max_loss=(-0.05)){
+stop_loss<-function(
+  strategy,
+  max_loss=(-0.05)
+){
   period_change<-c(TRUE,tail(strategy$roll,-1)!=head(strategy$roll,-1))
   squelched_seq_along<-seq_along(period_change)*period_change
   carry_fwd_seq_along<-cummax(squelched_seq_along)
@@ -512,16 +514,18 @@ compute_drawdown_stats<-function(strategy){
     strategy,
     drawdown=drawdown,
     high_watermark_value=carry_fwd_pnl,
-    high_watermark_count=cumsum(high_watermark)
+    episode=cumsum(high_watermark)
   )
   
-  setkey(res,high_watermark_count)
+  setkey(res,episode)
   
   res_stats<-res[,list(
     max_draw=max(drawdown),
     length_draw=length(drawdown),
-    date_draw=date[which.max(drawdown)]
-  ),keyby=high_watermark_count]
+    date_draw=date[which.max(drawdown)],
+    date_start=min(date),
+    date_end=max(date)
+  ),keyby=episode]
   
   res_stats[res]
   
@@ -1049,6 +1053,19 @@ ggplot() +
 geom_line(aes(x=date,y=drawdown,col=strategy),size=2,alpha=0.75)+
   ggtitle("Equal-weight all strategies, markets vs DOF drawdowns")
 
+
+equal_backtest_drawdown_stats_stop<-compute_drawdown_stats(stop_loss(equal_backtest,-0.03)[,pnl:=stopped_pnl])
+
+g_equal_drawdown_stats_stop <- rbind(
+  data.table(dof_drawdown_stats[,.(date,drawdown)],strategy="dof"),
+  data.table(equal_backtest_drawdown_stats_stop[date %in% dof$date,.(date,drawdown)],strategy="equal")
+) %>%
+ggplot() +
+geom_line(aes(x=date,y=drawdown,col=strategy),size=2,alpha=0.75)+
+  ggtitle("Equal-weight all strategies with stop-loss, markets vs DOF drawdowns")
+
+
+
 @
 \subsection{equal weights}
 
@@ -1060,9 +1077,14 @@ geom_line(aes(x=date,y=drawdown,col=strategy),size=2,alpha=0.75)+
 \\
 \Sexpr{make_plot(plot(g_equal_sl),height="10cm",width="10cm")}
 &
+\Sexpr{make_plot(plot(g_equal_drawdown_stats_stop),height="10cm",width="10cm")}
 \\
 \end{tabular}
 \end{center}
+
+\vskip 5mm
+
+\noindent Note the effect of a 3\% stop-loss on drawdowns. The drawdown depth decreases, but drawdown length increases.
 
 \newpage
 \subsection{theoretical weights  }
@@ -1129,6 +1151,17 @@ geom_line(aes(x=date,y=drawdown,col=strategy),size=2,alpha=0.75)+
   ggtitle("Theoretical-weight all strategies, markets vs DOF drawdowns")
 
 
+theoretical_backtest_drawdown_stats_stop<-compute_drawdown_stats(stop_loss(theoretical_backtest,-0.03)[,pnl:=stopped_pnl])
+
+g_theoretical_drawdown_stats_stop <- rbind(
+  data.table(dof_drawdown_stats[,.(date,drawdown)],strategy="dof"),
+  data.table(theoretical_backtest_drawdown_stats_stop[date %in% dof$date,.(date,drawdown)],strategy="equal")
+) %>%
+ggplot() +
+geom_line(aes(x=date,y=drawdown,col=strategy),size=2,alpha=0.75)+
+  ggtitle("theoretical-weight all strategies with stop-loss, markets vs DOF drawdowns")
+
+
 @
 
 
@@ -1153,6 +1186,7 @@ Short Straddles & 33 \% \\
 \\
 \Sexpr{make_plot(plot(g_theoretical_sl),height="10cm",width="10cm")}
 &
+\Sexpr{make_plot(plot(g_theoretical_drawdown_stats_stop),height="10cm",width="10cm")}
 \\
 \end{tabular}
 \end{center}
@@ -1222,6 +1256,41 @@ ggplot() +
 geom_line(aes(x=date,y=drawdown,col=strategy),size=2,alpha=0.75)+
   ggtitle("Historical-weight all strategies, markets vs DOF drawdowns")
 
+historical_backtest_drawdown_stats_stop<-compute_drawdown_stats(stop_loss(historical_backtest,-0.03)[,pnl:=stopped_pnl])
+
+g_historical_drawdown_stats_stop <- rbind(
+  data.table(dof_drawdown_stats[,.(date,drawdown)],strategy="dof"),
+  data.table(historical_backtest_drawdown_stats_stop[date %in% dof$date,.(date,drawdown)],strategy="equal")
+) %>%
+ggplot() +
+geom_line(aes(x=date,y=drawdown,col=strategy),size=2,alpha=0.75)+
+  ggtitle("historical-weight all strategies with stop-loss, markets vs DOF drawdowns")
+
+
+stop_loss_scenarios<-rbind(
+  compute_drawdown_stats(stop_loss(historical_backtest[date %in% dof$date],-0.10)[,pnl:=stopped_pnl])[
+    max_draw==max(max_draw)
+  ][1,.(
+    episode,max_draw,length_draw
+  )],
+  compute_drawdown_stats(stop_loss(historical_backtest[date %in% dof$date],-0.05)[,pnl:=stopped_pnl])[
+    max_draw==max(max_draw)
+  ][1,.(
+    episode,max_draw,length_draw
+  )],
+  compute_drawdown_stats(stop_loss(historical_backtest[date %in% dof$date],-0.03)[,pnl:=stopped_pnl])[
+    max_draw==max(max_draw)
+  ][1,.(
+    episode,max_draw,length_draw
+  )],
+  compute_drawdown_stats(stop_loss(historical_backtest[date %in% dof$date],-0.001)[,pnl:=stopped_pnl])[
+    max_draw==max(max_draw)
+  ][1,.(
+    episode,max_draw,length_draw
+  )]
+)
+
+
 
 @
 
@@ -1247,6 +1316,7 @@ Short Straddles & 16 \% \\
 \\
 \Sexpr{make_plot(plot(g_historical_sl),height="10cm",width="10cm")}
 &
+\Sexpr{make_plot(plot(g_historical_drawdown_stats_stop),height="10cm",width="10cm")}
 \\
 \end{tabular}
 \end{center}
@@ -1299,6 +1369,16 @@ ggplot() +
 geom_line(aes(x=date,y=drawdown,col=strategy),size=2,alpha=0.75)+
   ggtitle("spx_90_100_ps vs DOF drawdowns")
 
+spx_90_100_ps_drawdown_stats_stop<-compute_drawdown_stats(stop_loss(spx_90_100_ps_backtest,-0.03)[,pnl:=stopped_pnl])
+
+g_historical_drawdown_stats_stop <- rbind(
+  data.table(dof_drawdown_stats[,.(date,drawdown)],strategy="dof"),
+  data.table(spx_90_100_ps_drawdown_stats_stop[date %in% dof$date,.(date,drawdown)],strategy="equal")
+) %>%
+ggplot() +
+geom_line(aes(x=date,y=drawdown,col=strategy),size=2,alpha=0.75)+
+  ggtitle("SPX 90-100 put-spread with stop-loss, markets vs DOF drawdowns")
+
 @
 
 \noindent We examine a very simple strategy that seems to have similar drawdown performance with DOF. The
@@ -1312,6 +1392,7 @@ value of this proxy is that its behaviour is very intuitive and allows for easy 
 \\
 \Sexpr{make_plot(plot(g_spx_90_100_ps_sl),height="10cm",width="10cm")}
 &
+\Sexpr{make_plot(plot(g_historical_drawdown_stats_stop),height="10cm",width="10cm")}
 \\
 \end{tabular}
 \end{center}
@@ -1371,19 +1452,19 @@ spx_tail1_backtest<-make_strategy(
   strategy=strategy_TAIL1,
   shedule_3m[market=="spx"],
   all_vol[market=="spx"]
-)
+)[,.SD,keyby=date]
 
 spx_tail2_backtest<-make_strategy(
   strategy=strategy_TAIL2,
   shedule_3m[market=="spx"],
   all_vol[market=="spx"]
-)
+)[,.SD,keyby=date]
 
 spx_tail5_backtest<-make_strategy(
   strategy=strategy_TAIL5,
   shedule_3m[market=="spx"],
   all_vol[market=="spx"]
-)
+)[,.SD,keyby=date]
 
 
 x<-merge(
@@ -1416,12 +1497,26 @@ g_tail2_vs_dof<-melt(merge(
   geom_line(aes(x=date,y=value,col=variable),size=2,alpha=0.75)+
   ggtitle("Quarterly rolling 2-delta SPX puts vs DOF")
 
-compute_drawdown_stats(dof)[,.(
-  max_draw=max_draw[1],
-  date_draw=date_draw[1]
-),keyby=high_watermark_count][head(order(-max_draw),10)]
+#
+#
+#
+dof_drawdown_stats <- compute_drawdown_stats(dof)[,.(
+  max_draw=round(100*max_draw[1],digits=2),
+  date_draw=date_draw[1],
+  date_start=date_start[1],
+  date_end=date_end[1]
+),keyby=episode][head(order(-max_draw),10)][date_end>date_start][,list(
+  max_draw=max_draw,
+  date_draw=as.character(date_draw,format="%Y-%m-%d"),
+  date_start=as.character(date_start,format="%Y-%m-%d"),
+  date_end=as.character(date_end,format="%Y-%m-%d"),
+  teeny1=round(100*spx_tail1_backtest[(date>date_start) & (date<date_draw),max(pnl-pnl[1])],digits=2),
+  teeny2=round(100*spx_tail2_backtest[(date>date_start) & (date<date_draw),max(pnl-pnl[1])],digits=2),
+  teeny5=round(100*spx_tail5_backtest[(date>date_start) & (date<date_draw),max(pnl-pnl[1])],digits=2)
+),keyby=episode]
 
 
+spx_tail1_backtest
 
 @
 
@@ -1442,6 +1537,21 @@ rather than stop-out the risk premium collection portfolio on the pop and buy th
 
 \begin{center}
 \Sexpr{make_plot(plot(g_tail2_vs_dof),height="20cm",width="20cm")}
+\end{center}
+
+\newpage
+
+\vskip 5mm
+
+We examine the performanse of a tail-risk hedge during the largest draw-down episodes
+
+\vskip 5mm
+
+\begin{center}
+\Sexpr{ntable(
+  df=dof_drawdown_stats[order(-max_draw)],
+  title="largest DOF drawdown episodes, optimum teeny performance"
+)}
 \end{center}
 
 \newpage
@@ -1870,6 +1980,5 @@ the backtest engine is working as expected.
 
 
 \end{document}
-
 
 

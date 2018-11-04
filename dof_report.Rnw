@@ -1111,6 +1111,37 @@ ggplot() +
 geom_line(aes(x=date,y=drawdown,col=strategy),size=2,alpha=0.75) +
 ggtitle(paste0(w,"-weight vs DOF drawdowns, stoploss=",round(100*stop_level,digits=1)))
 
+sl_levels<-seq(0,0.1,length.out=20)
+
+make_sl_stats<-function(w)do.call(rbind,mapply(
+    function(level,backtest){
+      dds<-compute_drawdown_stats(stop_loss(backtest[date %in% dof$date],-level)[,pnl:=stopped_pnl])
+      data.table(
+        levels=level,
+        max_draw=max(dds$max_draw),
+        median_draw=median(dds$max_draw),
+        max_length=max(dds$length_draw),
+        median_length=median(dds$length_draw)
+      )
+    },
+    level=sl_levels,
+    MoreArgs = list(
+      backtest=weighted_strategy( weights=weights[[w]], backtests=all_backtests_3m)
+    ),
+    SIMPLIFY=FALSE
+))
+    
+
+make_sl_plot<-function(w,v=c("max_draw","median_draw")){
+  res<-melt(
+    make_sl_stats(w)[,c("levels",v),with=FALSE],
+    id.vars = "levels",
+    measure.vars = v
+  ) 
+  res %>%
+  ggplot() +
+  geom_line(aes(x=levels,y=value,col=variable))
+}
 
 quality_vs_stop_df<-data.table(
   stop_loss=round(100*seq(0,0.2,length.out=25),digits=2),
@@ -1157,32 +1188,6 @@ we are better off reducing position sizes rather than tightening stops.
 
 <<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
 
-equal_backtest<-weighted_strategy( weights=weights$equal, backtests=all_backtests_3m )
-equal_backtest_drawdown_stats<-compute_drawdown_stats(equal_backtest)
-
-
-g_equal_sl<-rbind(
-  data.table(stop_loss(equal_backtest[date %in% dof$date],-0.01),stop="01pct"),
-  data.table(stop_loss(equal_backtest[date %in% dof$date],-0.03),stop="03pct"),
-  data.table(stop_loss(equal_backtest[date %in% dof$date],-0.05),stop="05pct"),
-  data.table(stop_loss(equal_backtest[date %in% dof$date],-0.10),stop="10pct")
-)%>%
-ggplot() +
-geom_line(aes(x=date,y=stopped_pnl,col=stop),size=2,alpha=0.75)+
-ggtitle("Equal-weight all strategies, markets with stop-loss levels")
-
-equal_backtest_drawdown_stats_stop<-compute_drawdown_stats(stop_loss(equal_backtest,-0.03)[,pnl:=stopped_pnl])
-
-g_equal_drawdown_stats_stop <- rbind(
-  data.table(dof_drawdown_stats[,.(date,drawdown)],strategy="dof"),
-  data.table(equal_backtest_drawdown_stats_stop[date %in% dof$date,.(date,drawdown)],strategy="equal")
-) %>%
-ggplot() +
-geom_line(aes(x=date,y=drawdown,col=strategy),size=2,alpha=0.75)+
-  ggtitle("Equal-weight all strategies with stop-loss, markets vs DOF drawdowns")
-
-
-
 @
 \subsection{equal weights}
 
@@ -1192,9 +1197,9 @@ geom_line(aes(x=date,y=drawdown,col=strategy),size=2,alpha=0.75)+
 &
 \Sexpr{make_plot(plot(make_drawdown_plot("equal")),height="10cm",width="10cm")}
 \\
-\Sexpr{make_plot(plot(g_equal_sl),height="10cm",width="10cm")}
+\Sexpr{make_plot(plot(make_sl_plot("equal",c("max_draw","median_draw"))),height="10cm",width="10cm")}
 &
-\Sexpr{make_plot(plot(g_equal_drawdown_stats_stop),height="10cm",width="10cm")}
+\Sexpr{make_plot(plot(make_sl_plot("equal",c("max_length","median_length"))),height="10cm",width="10cm")}
 \\
 \end{tabular}
 \end{center}
@@ -1207,42 +1212,6 @@ geom_line(aes(x=date,y=drawdown,col=strategy),size=2,alpha=0.75)+
 \subsection{theoretical weights  }
 
 <<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
-
-theoretical_backtest<-weighted_strategy( weights=weights$theoretical, backtests=all_backtests_3m)
-theoretical_backtest_drawdown_stats<-compute_drawdown_stats(theoretical_backtest)
-
-g_theoretical<-make_backtest_plot("theoretical")
-
-
-g_theoretical_sl<-rbind(
-  data.table(stop_loss(theoretical_backtest[date %in% dof$date],-0.01),stop="01pct"),
-  data.table(stop_loss(theoretical_backtest[date %in% dof$date],-0.03),stop="03pct"),
-  data.table(stop_loss(theoretical_backtest[date %in% dof$date],-0.05),stop="05pct"),
-  data.table(stop_loss(theoretical_backtest[date %in% dof$date],-0.10),stop="10pct")
-)%>%
-ggplot() +
-geom_line(aes(x=date,y=stopped_pnl,col=stop),size=2,alpha=0.75)+
-ggtitle("Theoretical-weight all strategies, markets with stop-loss levels")
-
-
-g_theoretical_drawdown_stats <- rbind(
-  data.table(dof_drawdown_stats[,.(date,drawdown)],strategy="dof"),
-  data.table(theoretical_backtest_drawdown_stats[date %in% dof$date,.(date,drawdown)],strategy="theoretical")
-) %>%
-ggplot() +
-geom_line(aes(x=date,y=drawdown,col=strategy),size=2,alpha=0.75)+
-  ggtitle("Theoretical-weight all strategies, markets vs DOF drawdowns")
-
-
-theoretical_backtest_drawdown_stats_stop<-compute_drawdown_stats(stop_loss(theoretical_backtest,-0.03)[,pnl:=stopped_pnl])
-
-g_theoretical_drawdown_stats_stop <- rbind(
-  data.table(dof_drawdown_stats[,.(date,drawdown)],strategy="dof"),
-  data.table(theoretical_backtest_drawdown_stats_stop[date %in% dof$date,.(date,drawdown)],strategy="equal")
-) %>%
-ggplot() +
-geom_line(aes(x=date,y=drawdown,col=strategy),size=2,alpha=0.75)+
-  ggtitle("theoretical-weight all strategies with stop-loss, markets vs DOF drawdowns")
 
 
 @
@@ -1267,9 +1236,9 @@ Short Straddles & 33 \% \\
 &
 \Sexpr{make_plot(plot(make_drawdown_plot("theoretical")),height="10cm",width="10cm")}
 \\
-\Sexpr{make_plot(plot(g_theoretical_sl),height="10cm",width="10cm")}
+\Sexpr{make_plot(plot(make_sl_plot("theoretical",c("max_draw","median_draw"))),height="10cm",width="10cm")}
 &
-\Sexpr{make_plot(plot(g_theoretical_drawdown_stats_stop),height="10cm",width="10cm")}
+\Sexpr{make_plot(plot(make_sl_plot("theoretical",c("max_length","median_length"))),height="10cm",width="10cm")}
 \\
 \end{tabular}
 \end{center}
@@ -1280,64 +1249,6 @@ Short Straddles & 33 \% \\
 \subsection{historical weights}
 
 <<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
-
-historical_backtest<-weighted_strategy(weights=weights$historical, backtests=all_backtests_3m)
-historical_backtest_drawdown_stats<-compute_drawdown_stats(historical_backtest)
-
-g_historical<-make_backtest_plot("historical")
-
-g_historical_sl<-rbind(
-  data.table(stop_loss(historical_backtest[date %in% dof$date],-0.01),stop="01pct"),
-  data.table(stop_loss(historical_backtest[date %in% dof$date],-0.03),stop="03pct"),
-  data.table(stop_loss(historical_backtest[date %in% dof$date],-0.05),stop="05pct"),
-  data.table(stop_loss(historical_backtest[date %in% dof$date],-0.10),stop="10pct")
-)%>%
-ggplot() +
-geom_line(aes(x=date,y=stopped_pnl,col=stop),size=2,alpha=0.75)+
-ggtitle("Historical-weight all strategies, markets with stop-loss levels")
-
-g_historical_drawdown_stats <- rbind(
-  data.table(dof_drawdown_stats[,.(date,drawdown)],strategy="dof"),
-  data.table(historical_backtest_drawdown_stats[date %in% dof$date,.(date,drawdown)],strategy="theoretical")
-) %>%
-ggplot() +
-geom_line(aes(x=date,y=drawdown,col=strategy),size=2,alpha=0.75)+
-  ggtitle("Historical-weight all strategies, markets vs DOF drawdowns")
-
-historical_backtest_drawdown_stats_stop<-compute_drawdown_stats(stop_loss(historical_backtest,-0.03)[,pnl:=stopped_pnl])
-
-g_historical_drawdown_stats_stop <- rbind(
-  data.table(dof_drawdown_stats[,.(date,drawdown)],strategy="dof"),
-  data.table(historical_backtest_drawdown_stats_stop[date %in% dof$date,.(date,drawdown)],strategy="equal")
-) %>%
-ggplot() +
-geom_line(aes(x=date,y=drawdown,col=strategy),size=2,alpha=0.75)+
-  ggtitle("historical-weight all strategies with stop-loss, markets vs DOF drawdowns")
-
-
-stop_loss_scenarios<-rbind(
-  compute_drawdown_stats(stop_loss(historical_backtest[date %in% dof$date],-0.10)[,pnl:=stopped_pnl])[
-    max_draw==max(max_draw)
-  ][1,.(
-    episode,max_draw,length_draw
-  )],
-  compute_drawdown_stats(stop_loss(historical_backtest[date %in% dof$date],-0.05)[,pnl:=stopped_pnl])[
-    max_draw==max(max_draw)
-  ][1,.(
-    episode,max_draw,length_draw
-  )],
-  compute_drawdown_stats(stop_loss(historical_backtest[date %in% dof$date],-0.03)[,pnl:=stopped_pnl])[
-    max_draw==max(max_draw)
-  ][1,.(
-    episode,max_draw,length_draw
-  )],
-  compute_drawdown_stats(stop_loss(historical_backtest[date %in% dof$date],-0.001)[,pnl:=stopped_pnl])[
-    max_draw==max(max_draw)
-  ][1,.(
-    episode,max_draw,length_draw
-  )]
-)
-
 
 
 @
@@ -1362,9 +1273,9 @@ Short Straddles & 16 \% \\
 &
 \Sexpr{make_plot(plot(make_drawdown_plot("historical")),height="10cm",width="10cm")}
 \\
-\Sexpr{make_plot(plot(g_historical_sl),height="10cm",width="10cm")}
+\Sexpr{make_plot(plot(make_sl_plot("historical",c("max_draw","median_draw"))),height="10cm",width="10cm")}
 &
-\Sexpr{make_plot(plot(g_historical_drawdown_stats_stop),height="10cm",width="10cm")}
+\Sexpr{make_plot(plot(make_sl_plot("historical",c("max_length","median_length"))),height="10cm",width="10cm")}
 \\
 \end{tabular}
 \end{center}
@@ -1624,9 +1535,9 @@ in thise report, 1-delta SPX puts have the best ratio of premium to "price pop" 
 <<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
 
 combined_backtest<-rbind(
-  data.table(equal_backtest,weight="equal"),
-  data.table(theoretical_backtest,weight="theoretical"),
-  data.table(historical_backtest,weight="historical"),
+  data.table(weighted_strategy(weights$equal),weight="equal"),
+  data.table(weighted_strategy(weights$theoretical),weight="theoretical"),
+  data.table(weighted_strategy(weights$historical),weight="historical"),
   data.table(spx_90_100_ps_backtest,weight="spx90-100ps")
 )
 g_combined <- combined_backtest %>% 

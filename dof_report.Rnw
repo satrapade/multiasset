@@ -686,6 +686,49 @@ dof<- fread("dof.csv") %>%
 {.$pnl<-cumsum(.$pnl); .}
 
 
+all_vol[market=="spx"][order(Date)]
+
+ shedule<-make_shedule(all_vol[market=="spx"])
+
+date_df<-data.table(
+    date=shedule$date,
+    day=day(shedule$date),
+    mday=mday(shedule$date),
+    qday=qday(shedule$date),
+    yday=yday(shedule$date),
+    pday=seq_along(shedule$date),
+    wday=weekdays(shedule$date),
+    month=months(shedule$date),
+    wday_count=ceiling(mday(shedule$date)/7)
+  )[,.SD,keyby=date]
+  
+
+roll_dates<-Reduce(
+    function(a,b)eval(bquote(.(a)[.(b)])),
+    listed_expiries_3m,
+    init=date_df
+  )[,.SD,keyby=date][J(sort(unique(date))),.SD,mult="first"]
+
+roll_intervals<-data.table(
+    start=c(min(shedule$date),roll_dates$date),
+    end=c(roll_dates$date,max(shedule$date)),
+    roll=c("pre",as.character(seq_along(1:(nrow(roll_dates)-1))),"post")
+  )
+
+shedule_with_roll<-data.table(
+    shedule,
+    roll=roll_intervals$roll[findInterval(shedule$date,roll_intervals$start)]
+  )[,.SD,keyby=roll]
+  
+  shedule_with_roll_and_intervals<-merge(
+    x=shedule_with_roll,
+    y=roll_intervals,
+    by="roll"
+  )[,.SD,keyby=date]
+  
+  
+  
+
 shedule_3m<-make_roll_dates(
   filter_list=listed_expiries_3m,
   vsurfs=all_vol

@@ -2,19 +2,16 @@
 
 x<-data.table(
   day=rep(seq(from=1,by=3,length.out=15),each=3),
-  market=rep(seq(from=1,to=3),times=15),
+  strike=rep(seq(from=1,to=3),times=15),
   v=runif(15*3)
 )
 
-min(x[market==1][,day])
-max(x[market==1][,day])
+x1<-min(x[strike==1][,day])
+x2<-max(x[strike==1][,day])
 
-y<-data.table(
-  i=seq(from=min(x$i),to=max(x$i)),
-  j=findInterval(seq(from=min(x$i),to=max(x$i)))
+i<-findInterval(seq(from=x1,to=x2),x[strike==1,day])
+
+data.table(
+  from=x[strike==1,day][i],
+  to=seq(x1,x2)
 )
-
-
-
-
-

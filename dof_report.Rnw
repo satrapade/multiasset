@@ -54,6 +54,48 @@ require(Matrix)
 require(akima)
 require(ggplot2)
 
+#
+# vector of dates -> 
+# data.table of
+#   all dates
+#   rolled date
+#   roll count
+#
+roll_days<-function(dates){
+  diffs<-as.integer(diff(dates))
+  locs<-cumsum(c(1,diffs))
+  times<-c(diffs,1)
+  ndx<-seq(from=1,to=locs[length(locs)],by=1)
+  last_reset<-rep(locs,times=times)
+  rolled_dates<-rep(dates,times=c(diffs,1))
+  sequential_dates<-seq(from=dates[1],to=dates[length(dates)],by=1)
+  data.table(
+    allDate=sequential_dates,
+    Date=rolled_dates,
+    roll_count=ndx-last_reset
+  )
+}
+
+#
+#
+#
+roll_vols<-function(vsurf){
+  vsurf[
+    roll_days(sort(unique(vsurf$Date))),
+    on="Date", 
+    allow.cartesian=TRUE
+  ][,.(
+    Date=allDate,
+    Strike=Strike,
+    Days=Days,
+    ImpliedVol=ImpliedVol,
+    ClosePrice=ClosePrice,
+    #market=market,
+    market_count=market_count,
+    roll_count=roll_count
+  )]
+}
+
 resampled_spx_vol<-"compressed_resampled_spx_vol.txt" %>% scan(character()) %>% decompress
 resampled_sx5e_vol<-"compressed_resampled_sx5e_vol.txt" %>% scan(character()) %>% decompress
 resampled_ftse_vol<-"compressed_resampled_ftse_vol.txt" %>% scan(character()) %>% decompress
@@ -82,7 +124,7 @@ all_vol<-rbind( # data.table with all volatilities
     market_count=length(market)
   ),
   keyby=Date
-][ClosePrice>0]
+][ClosePrice>0][,roll_vols(.SD),keyby=market][,.SD,keyby=Date]
 
 # surface pillars
 all_strikes<-all_vol[,.(strikes=sort(unique(Strike))),keyby=market]
@@ -685,49 +727,6 @@ dof<- fread("dof.csv") %>%
 {.$date<-as.Date(.$date,format="%Y-%m-%d"); .} %>%
 {.$pnl<-cumsum(.$pnl); .}
 
-
-all_vol[market=="spx"][order(Date)]
-
- shedule<-make_shedule(all_vol[market=="spx"])
-
-date_df<-data.table(
-    date=shedule$date,
-    day=day(shedule$date),
-    mday=mday(shedule$date),
-    qday=qday(shedule$date),
-    yday=yday(shedule$date),
-    pday=seq_along(shedule$date),
-    wday=weekdays(shedule$date),
-    month=months(shedule$date),
-    wday_count=ceiling(mday(shedule$date)/7)
-  )[,.SD,keyby=date]
-  
-
-roll_dates<-Reduce(
-    function(a,b)eval(bquote(.(a)[.(b)])),
-    listed_expiries_3m,
-    init=date_df
-  )[,.SD,keyby=date][J(sort(unique(date))),.SD,mult="first"]
-
-roll_intervals<-data.table(
-    start=c(min(shedule$date),roll_dates$date),
-    end=c(roll_dates$date,max(shedule$date)),
-    roll=c("pre",as.character(seq_along(1:(nrow(roll_dates)-1))),"post")
-  )
-
-shedule_with_roll<-data.table(
-    shedule,
-    roll=roll_intervals$roll[findInterval(shedule$date,roll_intervals$start)]
-  )[,.SD,keyby=roll]
-  
-  shedule_with_roll_and_intervals<-merge(
-    x=shedule_with_roll,
-    y=roll_intervals,
-    by="roll"
-  )[,.SD,keyby=date]
-  
-  
-  
 
 shedule_3m<-make_roll_dates(
   filter_list=listed_expiries_3m,

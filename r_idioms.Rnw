@@ -439,6 +439,8 @@ episodes each having a drawdown of zero.
 \end{tabular}
 \end{center}
 
+\newpage
+\section{Expanding a long table to fir date gaps}
 
 
 \end{document}

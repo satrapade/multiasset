@@ -23,8 +23,21 @@ source("https://raw.githubusercontent.com/satrapade/pairs/master/sql_tools/make_
 source("https://raw.githubusercontent.com/satrapade/utility/master/nn_cast.R")
 source("https://raw.githubusercontent.com/satrapade/pairs/master/utility/make_date_range.R")
 
+#
+# spx, ndx, sx5e, dax, ftse, nky
+#
+spx_id<-"108105"
+ndx_id<-"102480"
+sx5e_id<-"504880"
+dax_id<-"506496"
+ftse_id<-"506528"
+nky_id<-"902278"
+eem_id<-"116959"
 
-make_market<-function(id="108105",vol_table="VOLATILITY_SURFACE_2014")
+market_id<-nky_id
+fname<-"nky"
+
+make_market<-function(id=sx5e_id,vol_table="VOLATILITY_SURFACE_2014")
 {
   dbma<-dbConnect(
     odbc::odbc(),
@@ -237,27 +250,27 @@ make_option_pnl<-function(
 on_site<-TRUE
 
 if(on_site){
-  spx_vol <- make_market(id="108105",vol_table="VOLATILITY_SURFACE_ALL")
-  fwrite(spx_vol,"spx_vol.csv")
+  market_vol <- make_market(id=market_id,vol_table="VOLATILITY_SURFACE_ALL")
+  fwrite(market_vol,paste0(fname,"_vol.csv"))
 } else {
-  spx_vol<-fread("spx_vol.csv")
-  spx_vol$Date<-fastPOSIXct(spx_vol$Date)
+  market_vol<-fread(paste0(fname,"_vol.csv"))
+  market_vol$Date<-fastPOSIXct(market_vol$Date)
 }
 
 #
 # resample vol surface to common set of strikes
 #
 
-maturities<-sort(unique(spx_vol$Days))
-strikes<-round(seq(from=250,to=3000,length.out=50),digits=0)
-resampled_spx_vol<-spx_vol[,resample_vol_grid(data.table(Date=Date,.SD),strikes,maturities,TRUE),keyby=Date]
+maturities<-sort(unique(market_vol$Days))
+strikes<-round(seq(from=150,to=40000,length.out=50),digits=0)
+resampled_market_vol<-market_vol[,resample_vol_grid(data.table(Date=Date,.SD),strikes,maturities,TRUE),keyby=Date]
 
 
 #
 # make strategy data frame
 #
 strategy_df<- make_strategy_df(
-  volsurf=resampled_spx_vol,
+  volsurf=resampled_market_vol,
   filter_list=list(
     quote(month %in% c("March","June","September","December")),
     quote(wday=="Friday"),
@@ -265,12 +278,12 @@ strategy_df<- make_strategy_df(
   )
 )
 
-fwrite(strategy_df,"strategy_df.csv")
-fwrite(resampled_spx_vol,"resampled_spx_vol.csv")
-write(compress(fread("resampled_spx_vol.csv")),"compressed_resampled_spx_vol.txt")
+fwrite(strategy_df,paste0(fname,"_strategy_df.csv"))
+fwrite(resampled_market_vol,paste0("resampled_",fname,"_vol.csv"))
+write(compress(fread(paste0("resampled_",fname,"_vol.csv"))),paste0("compressed_resampled_",fname,"_vol.txt"))
 
 strategy_df<-fread("strategy_df.csv")
-resampled_spx_vol<- "compressed_resampled_spx_vol.txt" %>% scan(character()) %>% decompress
+resampled_market_vol<- paste0("compressed_resampled_",fname,"_vol.txt") %>% scan(character()) %>% decompress
 
 #
 # compute option pnls
@@ -278,8 +291,8 @@ resampled_spx_vol<- "compressed_resampled_spx_vol.txt" %>% scan(character()) %>%
 system.time(strategy_pnl<-data.table(
   date=fastPOSIXct(strategy_df$date),
   pnl=rowSums(cbind(
-    make_option_pnl(model=EP,strike=0.95,dir=-1,strategy=strategy_df,vsurf=resampled_spx_vol)$pnl,
-    make_option_pnl(model=EP,strike=0.85,dir=+1,strategy=strategy_df,vsurf=resampled_spx_vol)$pnl
+    make_option_pnl(model=EP,strike=1.0,dir=-1,strategy=strategy_df,vsurf=resampled_market_vol)$pnl,
+    make_option_pnl(model=EP,strike=0.90,dir=+1,strategy=strategy_df,vsurf=resampled_market_vol)$pnl
   ))
 ))
 

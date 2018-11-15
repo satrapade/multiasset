@@ -11,3 +11,6 @@ figure/*.*
 *.tex
 *.toc
 *.pdf
+*.RData
+*.csv
+*.txt

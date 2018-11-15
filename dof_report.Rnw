@@ -54,78 +54,7 @@ require(Matrix)
 require(akima)
 require(ggplot2)
 
-# #
-# # vector of dates -> 
-# # data.table of
-# #   all dates
-# #   rolled date
-# #   roll count
-# #
-# roll_days<-function(dates){
-#   diffs<-as.integer(diff(dates))
-#   locs<-cumsum(c(1,diffs))
-#   times<-c(diffs,1)
-#   ndx<-seq(from=1,to=locs[length(locs)],by=1)
-#   last_reset<-rep(locs,times=times)
-#   rolled_dates<-rep(dates,times=c(diffs,1))
-#   sequential_dates<-seq(from=dates[1],to=dates[length(dates)],by=1)
-#   data.table(
-#     allDate=sequential_dates,
-#     Date=rolled_dates,
-#     roll_count=ndx-last_reset
-#   )
-# }
-# 
-# #
-# #
-# #
-# roll_vols<-function(vsurf){
-#   vsurf[
-#     roll_days(sort(unique(vsurf$Date))),
-#     on="Date", 
-#     allow.cartesian=TRUE
-#   ][,.(
-#     Date=allDate,
-#     Strike=Strike,
-#     Days=Days,
-#     ImpliedVol=ImpliedVol,
-#     ClosePrice=ClosePrice,
-#     #market=market,
-#     market_count=market_count,
-#     roll_count=roll_count
-#   )]
-# }
-# 
-# resampled_spx_vol<-"compressed_resampled_spx_vol.txt" %>% scan(character()) %>% decompress
-# resampled_sx5e_vol<-"compressed_resampled_sx5e_vol.txt" %>% scan(character()) %>% decompress
-# resampled_ftse_vol<-"compressed_resampled_ftse_vol.txt" %>% scan(character()) %>% decompress
-# resampled_nky_vol<-"compressed_resampled_nky_vol.txt" %>% scan(character()) %>% decompress
-# #resampled_eem_vol<-"compressed_resampled_eem_vol.txt" %>% scan(character()) %>% decompress
-# 
-# all_vol<-rbind( # data.table with all volatilities
-#   data.table(resampled_spx_vol,market="spx"),
-#   data.table(resampled_sx5e_vol,market="sx5e"),
-#   data.table(resampled_ftse_vol,market="ftse"),
-#   data.table(resampled_nky_vol,market="nky")
-# )[,.(
-#     Date=as.Date(stri_sub(Date,1,10),format="%Y-%m-%d"),
-#     Strike=Strike,
-#     Days=Days,
-#     ImpliedVol=ImpliedVol,
-#     ClosePrice=ClosePrice,
-#     market=market
-# )][,
-#   .(
-#     Strike=Strike,
-#     Days=Days,
-#     ImpliedVol=ImpliedVol,
-#     ClosePrice=ClosePrice,
-#     market=market,
-#     market_count=length(market)
-#   ),
-#   keyby=Date
-# ][ClosePrice>0][,roll_vols(.SD),keyby=market][,.SD,keyby=Date]
-#
+
 
 all_vol<-"compressed_all_vol.txt" %>% scan(character()) %>% decompress
 all_vol$Date <- as.Date(all_vol$Date,format="%Y-%m-%d")
@@ -548,9 +477,9 @@ weighted_strategy<-function(
 #
 #
 weights<-list(
- equal=c(CSC=0.33,PSC=0.0,ZCRR=0.0,PR=0.33,CR=0.0,SS=0.33),
- theoretical=c(CSC=0.33,PSC=0.0,ZCRR=0.0,PR=0.33,CR=0.0,SS=0.33),
- historical=c(CSC=0.43,PSC=0.19,ZCRR=0.07,PR=0.15,CR=0.0,SS=0.16)
+ equal=c(CSC=0.33,PSC=0.0,ZCRR=0.0,PR=0.33,CR=0.0,SS=0.33,TAIL1=0,TAIL2=0,TAIL5=0),
+ theoretical=c(CSC=0.33,PSC=0.0,ZCRR=0.0,PR=0.33,CR=0.0,SS=0.33,TAIL1=0,TAIL2=0,TAIL5=0),
+ historical=c(CSC=0.43,PSC=0.19,ZCRR=0.07,PR=0.15,CR=0.0,SS=0.16,TAIL1=0,TAIL2=0,TAIL5=0)
 )
 
 #
@@ -926,6 +855,22 @@ strategy_ZCRR<-list(
   )
 )
 
+
+########################################
+# TAIL1, 1 delta P
+########################################
+strategy_TAIL1<-list(
+  leg1=list(
+    model=EP,
+    strike=function(close,vol,maturity){ 
+      put_K<-D2PK(0.01,close,vol,maturity/365)
+      put_K
+    },
+    weight=(+1)
+  )
+)
+
+
 ########################################
 # TAIL2, 2 delta P
 ########################################
@@ -940,6 +885,19 @@ strategy_TAIL2<-list(
   )
 )
 
+########################################
+# TAIL5, 5 delta P
+########################################
+strategy_TAIL5<-list(
+  leg1=list(
+    model=EP,
+    strike=function(close,vol,maturity){ 
+      put_K<-D2PK(0.05,close,vol,maturity/365)
+      put_K
+    },
+    weight=(+1)
+  )
+)
 
 
 #
@@ -951,17 +909,12 @@ strategies<-list(
   PSC=strategy_PSC,
   CR=strategy_CR,
   PR=strategy_PR,
-  ZCRR=strategy_ZCRR
+  ZCRR=strategy_ZCRR,
+  TAIL1=strategy_TAIL1,
+  TAIL2=strategy_TAIL2,
+  TAIL5=strategy_TAIL5
 )
 
-strategies1<-list(
-  SS=list(payoff=strategy_SS,shedule=shedule_3m),
-  CSC=list(payoff=strategy_CSC,shedule=shedule_3m),
-  PSC=list(payoff=strategy_PSC,shedule=shedule_3m),
-  CR=list(payoff=strategy_CR,shedule=shedule_3m),
-  PR=list(payoff=strategy_PR,shedule=shedule_3m),
-  ZCRR=list(payoff=strategy_ZCRR,shedule=shedule_3m)
-)
 
 
 #
@@ -1013,55 +966,62 @@ x<-make_strategy(
   volsurf=all_vol[market=="spx"]
 )
 
+# all_backtests_3m<-data.table(
+#   strategy=rep(names(strategies),times=length(markets)),
+#   market=rep(markets,each=length(strategies))
+# )[,c(.SD,list(
+#   backtest=mapply(function(the_market,the_strategy){
+#     make_strategy(
+#       strategy=strategies[[the_strategy]],
+#       shedule_3m[market==the_market],
+#       all_vol[market==the_market]
+#     )
+#   },market,strategy,SIMPLIFY=FALSE)
+# ))][,c(.SD,list(
+#   plot=mapply(make_simple_backtest_plot,backtest=backtest,the_market=market,the_strategy=strategy)
+# ))]
 
+all_backtests_3m<-readRDS("all_backtests_3m.RData")[,
+   plot:=mapply(make_simple_backtest_plot,backtest=backtest,the_market=market,the_strategy=strategy)
+]
 
+# all_backtests_6m_a<-data.table(
+#   strategy=rep(names(strategies),times=length(markets)),
+#   market=rep(markets,each=length(strategies))
+# )[,c(.SD,list(
+#   backtest=mapply(function(the_market,the_strategy){
+#     make_strategy(
+#       strategy=strategies[[the_strategy]],
+#       shedule_6m_a[market==the_market],
+#       all_vol[market==the_market]
+#     )
+#   },market,strategy,SIMPLIFY=FALSE)
+# ))][,c(.SD,list(
+#   plot=mapply(make_simple_backtest_plot,backtest=backtest,the_market=market,the_strategy=strategy)
+# ))]
 
+all_backtests_6m_a<-readRDS("all_backtests_6m_a.RData")[,
+   plot:=mapply(make_simple_backtest_plot,backtest=backtest,the_market=market,the_strategy=strategy)
+]
 
-all_backtests_3m<-data.table(
-  strategy=rep(names(strategies),times=length(markets)),
-  market=rep(markets,each=length(strategies))
-)[,c(.SD,list(
-  backtest=mapply(function(the_market,the_strategy){
-    make_strategy(
-      strategy=strategies[[the_strategy]],
-      shedule_3m[market==the_market],
-      all_vol[market==the_market]
-    )
-  },market,strategy,SIMPLIFY=FALSE)
-))][,c(.SD,list(
-  plot=mapply(make_simple_backtest_plot,backtest=backtest,the_market=market,the_strategy=strategy)
-))]
+# all_backtests_6m_b<-data.table(
+#   strategy=rep(names(strategies),times=length(markets)),
+#   market=rep(markets,each=length(strategies))
+# )[,c(.SD,list(
+#   backtest=mapply(function(the_market,the_strategy){
+#     make_strategy(
+#       strategy=strategies[[the_strategy]],
+#       shedule_6m_b[market==the_market],
+#       all_vol[market==the_market]
+#     )
+#   },market,strategy,SIMPLIFY=FALSE)
+# ))][,c(.SD,list(
+#   plot=mapply(make_simple_backtest_plot,backtest=backtest,the_market=market,the_strategy=strategy)
+# ))]
 
-all_backtests_6m_a<-data.table(
-  strategy=rep(names(strategies),times=length(markets)),
-  market=rep(markets,each=length(strategies))
-)[,c(.SD,list(
-  backtest=mapply(function(the_market,the_strategy){
-    make_strategy(
-      strategy=strategies[[the_strategy]],
-      shedule_6m_a[market==the_market],
-      all_vol[market==the_market]
-    )
-  },market,strategy,SIMPLIFY=FALSE)
-))][,c(.SD,list(
-  plot=mapply(make_simple_backtest_plot,backtest=backtest,the_market=market,the_strategy=strategy)
-))]
-
-all_backtests_6m_b<-data.table(
-  strategy=rep(names(strategies),times=length(markets)),
-  market=rep(markets,each=length(strategies))
-)[,c(.SD,list(
-  backtest=mapply(function(the_market,the_strategy){
-    make_strategy(
-      strategy=strategies[[the_strategy]],
-      shedule_6m_b[market==the_market],
-      all_vol[market==the_market]
-    )
-  },market,strategy,SIMPLIFY=FALSE)
-))][,c(.SD,list(
-  plot=mapply(make_simple_backtest_plot,backtest=backtest,the_market=market,the_strategy=strategy)
-))]
-
+all_backtests_6m_b<-readRDS("all_backtests_6m_b.RData")[,
+   plot:=mapply(make_simple_backtest_plot,backtest=backtest,the_market=market,the_strategy=strategy)
+]
 
 NNcast<-function(
   data,

@@ -93,6 +93,7 @@ fwrite(all_vol,paste0("all_vol.csv"))
 write(compress(fread(paste0("all_vol.csv"))),paste0("compressed_all_vol.txt"))
 
 all_vol<-"compressed_all_vol.txt" %>% scan(character()) %>% decompress
+all_vol$Date <- as.Date(all_vol$Date,format="%Y-%m-%d")
 
 # surface pillars
 all_strikes<-all_vol[,.(strikes=sort(unique(Strike))),keyby=market]
@@ -956,16 +957,10 @@ strategies<-list(
   PSC=strategy_PSC,
   CR=strategy_CR,
   PR=strategy_PR,
-  ZCRR=strategy_ZCRR
-)
-
-strategies1<-list(
-  SS=list(payoff=strategy_SS,shedule=shedule_3m),
-  CSC=list(payoff=strategy_CSC,shedule=shedule_3m),
-  PSC=list(payoff=strategy_PSC,shedule=shedule_3m),
-  CR=list(payoff=strategy_CR,shedule=shedule_3m),
-  PR=list(payoff=strategy_PR,shedule=shedule_3m),
-  ZCRR=list(payoff=strategy_ZCRR,shedule=shedule_3m)
+  ZCRR=strategy_ZCRR,
+  TAIL1=strategy_TAIL1,
+  TAIL2=strategy_TAIL2,
+  TAIL5=strategy_TAIL5
 )
 
 
@@ -1023,6 +1018,8 @@ all_backtests_3m<-data.table(
   plot=mapply(make_simple_backtest_plot,backtest=backtest,the_market=market,the_strategy=strategy)
 ))]
 
+saveRDS(all_backtests_3m,file="all_backtests_3m.RData")
+
 all_backtests_6m_a<-data.table(
   strategy=rep(names(strategies),times=length(markets)),
   market=rep(markets,each=length(strategies))
@@ -1037,6 +1034,8 @@ all_backtests_6m_a<-data.table(
 ))][,c(.SD,list(
   plot=mapply(make_simple_backtest_plot,backtest=backtest,the_market=market,the_strategy=strategy)
 ))]
+
+saveRDS(all_backtests_6m_a,file="all_backtests_6m_a.RData")
 
 all_backtests_6m_b<-data.table(
   strategy=rep(names(strategies),times=length(markets)),
@@ -1053,6 +1052,7 @@ all_backtests_6m_b<-data.table(
   plot=mapply(make_simple_backtest_plot,backtest=backtest,the_market=market,the_strategy=strategy)
 ))]
 
+saveRDS(all_backtests_6m_b,file="all_backtests_6m_b.RData")
 
 NNcast<-function(
   data,

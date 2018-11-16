@@ -55,9 +55,11 @@ require(akima)
 require(ggplot2)
 
 
-
-all_vol<-"compressed_all_vol.txt" %>% scan(character()) %>% decompress
-all_vol$Date <- as.Date(all_vol$Date,format="%Y-%m-%d")
+#
+all_vol<-"compressed_all_vol.txt" %>% 
+  scan(character()) %>% 
+  decompress %>% 
+  {.$Date <- as.Date(.$Date,format="%Y-%m-%d");.}
 
 # surface pillars
 all_strikes<-all_vol[,.(strikes=sort(unique(Strike))),keyby=market]
@@ -445,49 +447,7 @@ make_strategy<-function(
 }
 
 #
-#
-weighted_strategy<-function(
-  weights=c(CSC=0.33,PSC=0.0,ZCRR=0.0,PR=0.33,CR=0.0,SS=0.33),
-  backtests=all_backtests_3m,
-  stop_level=0.2
-){
-  
-  backtest_matrix<-local({
-    res<-do.call(cbind,mapply(function(b){
-      stop_loss(b,-abs(stop_level))$stopped_pnl
-    },backtests$backtest,SIMPLIFY=FALSE))
-    colnames(res)<-paste0(backtests$market,"|",backtests$strategy)
-    rownames(res)<-as.character(backtests$backtest[[1]]$date,format="%Y-%m-%d")
-    res
-  })
-
-  backtest_df<-data.table(
-    date=backtests$backtest[[1]]$date,
-    pnl=local({
-      res<-drop(backtest_matrix %*% cbind(weights[backtests$strategy] %>% {./sum(.)}))
-      res
-    }),
-    roll=backtests$backtest[[1]]$roll
-  )
-  
-  backtest_df
-  
-}
-
-#
-#
-weights<-list(
- equal=c(CSC=0.33,PSC=0.0,ZCRR=0.0,PR=0.33,CR=0.0,SS=0.33,TAIL1=0,TAIL2=0,TAIL5=0),
- theoretical=c(CSC=0.33,PSC=0.0,ZCRR=0.0,PR=0.33,CR=0.0,SS=0.33,TAIL1=0,TAIL2=0,TAIL5=0),
- historical=c(CSC=0.43,PSC=0.19,ZCRR=0.07,PR=0.15,CR=0.0,SS=0.16,TAIL1=0,TAIL2=0,TAIL5=0)
-)
-
-#
-#
-sl_levels<-seq(0,0.1,length.out=20)
-
-#
-# add stop-loss to strategy
+# add stop-loss to a strategy
 #
 stop_loss<-function(
   strategy,
@@ -514,6 +474,73 @@ stop_loss<-function(
     stopped_pnl=stopped_pnl
   )
 }
+
+
+#
+# add take-profit to a strategy
+#
+take_profit<-function(
+  strategy,
+  max_profit=0.05
+){
+  period_change<-c(TRUE,tail(strategy$roll,-1)!=head(strategy$roll,-1))
+  squelched_seq_along<-seq_along(period_change)*period_change
+  carry_fwd_seq_along<-cummax(squelched_seq_along)
+  carry_fwd_pnl<-strategy$pnl[carry_fwd_seq_along]
+  period_pnl<-strategy$pnl-carry_fwd_pnl
+  above_target<-(period_pnl>max_profit)
+  cum_period_profit<-cumsum(above_target)
+  period_above_target<-(cum_period_profit-cum_period_profit[carry_fwd_seq_along])>0
+  pnl_diff<-c(strategy$pnl[1],diff(strategy$pnl))
+  lagged_profit<-c(FALSE,period_above_target[-1])
+  stopped_pnl_diff<-pnl_diff*(!lagged_profit)
+  stopped_pnl<-cumsum(stopped_pnl_diff)
+  data.table(
+    strategy,
+    period=carry_fwd_seq_along,
+    period_pnl=period_pnl,
+    above_target=above_target,
+    period_target=period_above_target,
+    stopped_pnl=stopped_pnl
+  )
+}
+
+
+#
+#
+weighted_strategy<-function(
+  weights=c(CSC=0.33,PSC=0.0,ZCRR=0.0,PR=0.33,CR=0.0,SS=0.33),
+  backtests=all_backtests_3m,
+  stop_level=0.2,
+  stop_type="SL"
+){
+  
+  backtest_matrix<-local({
+    res<-do.call(cbind,mapply(function(b){
+      if(stop_type=="SL")return(stop_loss(b,-abs(stop_level))$stopped_pnl)
+      if(stop_type=="TP")return(take_profit(b,abs(stop_level))$stopped_pnl)
+      b$pnl
+    },backtests$backtest,SIMPLIFY=FALSE))
+    colnames(res)<-paste0(backtests$market,"|",backtests$strategy)
+    rownames(res)<-as.character(backtests$backtest[[1]]$date,format="%Y-%m-%d")
+    res
+  })
+
+  backtest_df<-data.table(
+    date=backtests$backtest[[1]]$date,
+    pnl=local({
+      res<-drop(backtest_matrix %*% cbind(weights[backtests$strategy] %>% {./sum(.)}))
+      res
+    }),
+    roll=backtests$backtest[[1]]$roll
+  )
+  
+  backtest_df
+  
+}
+
+
+
 
 #
 # drawdown stats
@@ -572,84 +599,6 @@ make_sl_stats<-function(
     SIMPLIFY=FALSE
 ))
 
-make_sl_plot<-function(
-  w,
-  v=c("max_draw","median_draw"),
-  backtest=weighted_strategy( weights=weights[[w]], backtests=all_backtests_3m),
-  sl_levels=seq(0,0.1,length.out = 20)
-){
-  res<-melt(
-    make_sl_stats(w, backtest=backtest,sl_levels = sl_levels)[,c("levels",v),with=FALSE],
-    id.vars = "levels",
-    measure.vars = v
-  ) 
-  res %>%
-  ggplot() +
-  geom_line(aes(x=levels,y=value,col=variable),size=2,alpha=0.75) +
-  ggtitle(paste0(w,"-weight vs DOF drawdowns"))
-}
-
-
-
-#
-#
-make_backtest_plot<-function(
-  w,
-  stop_level=0.025
-)rbind(
-  data.table(dof[,.(date,pnl)],strategy="DOF"),
-  data.table(
-    weighted_strategy(weights=weights[[w]],backtests=all_backtests_3m )[
-      date %in% dof$date,
-      .(date,pnl=(pnl-pnl[1])*sd(diff(dof$pnl))/sd(diff(pnl)))
-    ],
-    strategy="bkt_20"
-  ),
-  data.table(
-    weighted_strategy(weights=weights$equal,backtests=all_backtests_3m, stop_level = 0.03)[
-      date %in% dof$date,
-      .(date, pnl=(pnl-pnl[1])*sd(diff(dof$pnl))/sd(diff(pnl)))
-    ],
-    strategy="bkt_03"
-  ),
-  data.table(
-    weighted_strategy(weights=weights$equal,backtests=all_backtests_3m, stop_level = 0.01)[
-      date %in% dof$date,
-      .(date, pnl=(pnl-pnl[1])*sd(diff(dof$pnl))/sd(diff(pnl)))
-    ],
-    strategy="bkt_01"
-  )
-) %>% 
-  ggplot() +
-  geom_line(aes(x=date,y=pnl,col=strategy),size=2,alpha=0.75)+
-  ggtitle(paste0(w,"-weight all strategies, markets vs DOF"))
-
-
-#
-#
-make_drawdown_plot <- function(
-  w,
-  stop_level=0.025,
-  backtest=weighted_strategy(
-    weights=weights[[w]],
-    backtests=all_backtests_3m,
-    stop_level = -abs(stop_level)
-  )
-)rbind(
-  data.table(dof_drawdown_stats[,.(date,drawdown)],strategy="dof"),
-  data.table(
-    compute_drawdown_stats(
-      backtest[
-      date %in% dof$date,
-      .(date,pnl=(pnl-pnl[1])*sd(diff(dof$pnl))/sd(diff(pnl)))
-    ])[,.(date,drawdown)],
-    strategy=paste0(w)
-  )
-) %>%
-ggplot() +
-geom_line(aes(x=date,y=drawdown,col=strategy),size=2,alpha=0.75) +
-ggtitle(paste0(w,"-weight vs DOF drawdowns, stoploss=",round(100*stop_level,digits=1)))
-
 
 
 # read DOF performance, 
@@ -660,6 +609,18 @@ dof<- fread("dof.csv") %>%
 {.$date<-as.Date(.$date,format="%Y-%m-%d"); .} %>%
 {.$pnl<-cumsum(.$pnl); .}
 
+
+
+@
+
+<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
+#
+# strategy setup
+#
+
+########################################
+# shedules
+########################################
 
 shedule_3m<-make_roll_dates(
   filter_list=listed_expiries_3m,
@@ -676,12 +637,6 @@ shedule_6m_b<-make_roll_dates(
   vsurfs=all_vol
 )
 
-@
-
-<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
-#
-# strategies
-#
 
 ########################################
 # short 90-100 putspread
@@ -899,10 +854,9 @@ strategy_TAIL5<-list(
   )
 )
 
-
-#
+########################################
 # list of strategies
-#
+########################################
 strategies<-list(
   SS=strategy_SS,
   CSC=strategy_CSC,
@@ -912,14 +866,14 @@ strategies<-list(
   ZCRR=strategy_ZCRR,
   TAIL1=strategy_TAIL1,
   TAIL2=strategy_TAIL2,
-  TAIL5=strategy_TAIL5
+  TAIL5=strategy_TAIL5,
+  PS_100_90=strategy_90_100_PS
 )
 
 
-
-#
+########################################
 # list of markets
-#
+########################################
 markets<-c(
   "spx",
   "sx5e",
@@ -927,7 +881,58 @@ markets<-c(
   "nky"
 )
 
+########################################
+# strategy portfolios
+########################################
+weights<-list(
+  ##
+  equal=c(
+   CSC=0.33, PSC=0.0, ZCRR=0.0, PR=0.33, CR=0.0, SS=0.33, TAIL1=0, TAIL2=0, TAIL5=0, PS_100_90=0
+  ),
+  ##
+  theoretical=c(
+    CSC=0.33, PSC=0.0, ZCRR=0.0, PR=0.33, CR=0.0, SS=0.33, TAIL1=0, TAIL2=0, TAIL5=0, PS_100_90=0
+  ),
+  ##
+  historical=c(
+    CSC=0.43, PSC=0.19, ZCRR=0.07, PR=0.15, CR=0.0, SS=0.16, TAIL1=0, TAIL2=0, TAIL5=0, PS_100_90=0
+  ),
+  ##
+  putspread=c(
+    CSC=0, PSC=0, ZCRR=0, PR=0, CR=0, SS=0, TAIL1=0, TAIL2=0, TAIL5=0, PS_100_90=1.0
+  ),
+  ##
+  tail1=c(
+    CSC=0, PSC=0, ZCRR=0, PR=0, CR=0, SS=0, TAIL1=1.0, TAIL2=0, TAIL5=0, PS_100_90=0
+  ),
+  ##
+  tail2=c(
+    CSC=0, PSC=0, ZCRR=0, PR=0, CR=0, SS=0, TAIL1=0, TAIL2=1.0, TAIL5=0, PS_100_90=0
+  ),
+  ##
+  tail5=c(
+    CSC=0, PSC=0, ZCRR=0, PR=0, CR=0, SS=0, TAIL1=0, TAIL2=0, TAIL5=1.0, PS_100_90=0
+  )
+)
 
+########################################
+#
+# stop-loss levels
+#
+########################################
+sl_levels<-seq(0,0.1,length.out=20)
+
+
+@
+
+<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
+#
+# plotting functions
+#
+
+
+#
+#
 make_simple_backtest_plot<-function(
   backtest,
   the_market,
@@ -955,7 +960,103 @@ make_simple_backtest_plot<-function(
   
 }
 
+#
+#
+make_sl_plot<-function(
+  w,
+  v=c("max_draw","median_draw"),
+  backtest=weighted_strategy( weights=weights[[w]], backtests=all_backtests_3m),
+  sl_levels=seq(0,0.1,length.out = 20)
+){
+  res<-melt(
+    make_sl_stats(w, backtest=backtest,sl_levels = sl_levels)[,c("levels",v),with=FALSE],
+    id.vars = "levels",
+    measure.vars = v
+  ) 
+  res %>%
+  ggplot() +
+  geom_line(aes(x=levels,y=value,col=variable),size=2,alpha=0.75) +
+  ggtitle(paste0(w,"-weight vs DOF drawdowns"))
+}
+
+
+#
+#
+make_drawdown_plot <- function(
+  w,
+  stop_level=0.025,
+  backtest=weighted_strategy(
+    weights=weights[[w]],
+    backtests=all_backtests_3m,
+    stop_level = -abs(stop_level)
+  )
+)rbind(
+  data.table(dof_drawdown_stats[,.(date,drawdown)],strategy="dof"),
+  data.table(
+    compute_drawdown_stats(
+      backtest[
+      date %in% dof$date,
+      .(date,pnl=(pnl-pnl[1])*sd(diff(dof$pnl))/sd(diff(pnl)))
+    ])[,.(date,drawdown)],
+    strategy=paste0(w)
+  )
+) %>%
+ggplot() +
+geom_line(aes(x=date,y=drawdown,col=strategy),size=2,alpha=0.75) +
+ggtitle(paste0(w,"-weight vs DOF drawdowns, stoploss=",round(100*stop_level,digits=1)))
+
+#
+#
+make_backtest_plot<-function(
+  w,
+  stop_levels=c(0.20,0.03,0.01),
+  stop_type="SL"
+)rbind(
+  data.table(dof[,.(date,pnl)],strategy="DOF"),
+  data.table(
+    weighted_strategy(
+      weights=weights[[w]],
+      backtests=all_backtests_3m, 
+      stop_level = stop_levels[1], 
+      stop_type=stop_type 
+    )[
+      date %in% dof$date,
+      .(date,pnl=(pnl-pnl[1])*sd(diff(dof$pnl))/sd(diff(pnl)))
+    ],
+    strategy="bkt_20"
+  ),
+  data.table(
+    weighted_strategy(
+      weights=weights[[w]],
+      backtests=all_backtests_3m, 
+      stop_level = stop_levels[2], 
+      stop_type=stop_type
+    )[
+      date %in% dof$date,
+      .(date, pnl=(pnl-pnl[1])*sd(diff(dof$pnl))/sd(diff(pnl)))
+    ],
+    strategy="bkt_03"
+  ),
+  data.table(
+    weighted_strategy(
+      weights=weights[[w]],
+      backtests=all_backtests_3m, 
+      stop_level = stop_levels[3], 
+      stop_type=stop_type
+    )[
+      date %in% dof$date,
+      .(date, pnl=(pnl-pnl[1])*sd(diff(dof$pnl))/sd(diff(pnl)))
+    ],
+    strategy="bkt_01"
+  )
+) %>% 
+  ggplot() +
+  geom_line(aes(x=date,y=pnl,col=strategy),size=2,alpha=0.75)+
+  ggtitle(paste0(w,"-weight all strategies, markets vs DOF"))
+
+
 @
+
 
 
 <<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
@@ -966,58 +1067,16 @@ x<-make_strategy(
   volsurf=all_vol[market=="spx"]
 )
 
-# all_backtests_3m<-data.table(
-#   strategy=rep(names(strategies),times=length(markets)),
-#   market=rep(markets,each=length(strategies))
-# )[,c(.SD,list(
-#   backtest=mapply(function(the_market,the_strategy){
-#     make_strategy(
-#       strategy=strategies[[the_strategy]],
-#       shedule_3m[market==the_market],
-#       all_vol[market==the_market]
-#     )
-#   },market,strategy,SIMPLIFY=FALSE)
-# ))][,c(.SD,list(
-#   plot=mapply(make_simple_backtest_plot,backtest=backtest,the_market=market,the_strategy=strategy)
-# ))]
 
 all_backtests_3m<-readRDS("all_backtests_3m.RData")[,
    plot:=mapply(make_simple_backtest_plot,backtest=backtest,the_market=market,the_strategy=strategy)
 ]
 
-# all_backtests_6m_a<-data.table(
-#   strategy=rep(names(strategies),times=length(markets)),
-#   market=rep(markets,each=length(strategies))
-# )[,c(.SD,list(
-#   backtest=mapply(function(the_market,the_strategy){
-#     make_strategy(
-#       strategy=strategies[[the_strategy]],
-#       shedule_6m_a[market==the_market],
-#       all_vol[market==the_market]
-#     )
-#   },market,strategy,SIMPLIFY=FALSE)
-# ))][,c(.SD,list(
-#   plot=mapply(make_simple_backtest_plot,backtest=backtest,the_market=market,the_strategy=strategy)
-# ))]
 
 all_backtests_6m_a<-readRDS("all_backtests_6m_a.RData")[,
    plot:=mapply(make_simple_backtest_plot,backtest=backtest,the_market=market,the_strategy=strategy)
 ]
 
-# all_backtests_6m_b<-data.table(
-#   strategy=rep(names(strategies),times=length(markets)),
-#   market=rep(markets,each=length(strategies))
-# )[,c(.SD,list(
-#   backtest=mapply(function(the_market,the_strategy){
-#     make_strategy(
-#       strategy=strategies[[the_strategy]],
-#       shedule_6m_b[market==the_market],
-#       all_vol[market==the_market]
-#     )
-#   },market,strategy,SIMPLIFY=FALSE)
-# ))][,c(.SD,list(
-#   plot=mapply(make_simple_backtest_plot,backtest=backtest,the_market=market,the_strategy=strategy)
-# ))]
 
 all_backtests_6m_b<-readRDS("all_backtests_6m_b.RData")[,
    plot:=mapply(make_simple_backtest_plot,backtest=backtest,the_market=market,the_strategy=strategy)
@@ -1087,7 +1146,6 @@ backtest_6m_b_plot_matrix<-NNcast(
 
 
 @
-
 
 
 \tableofcontents
@@ -1312,86 +1370,95 @@ Short Straddles & 16 \% \\
 \end{tabular}
 \end{center}
 
-
-
 \newpage
-\section{A DOF proxy: SPX Q90-100 PS vs DOF performance}
+\subsection{PS 90 100 }
 
 <<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
 
-spx_90_100_ps_backtest<-make_strategy(
-  strategy=strategy_90_100_PS,
-  shedule_3m[market=="spx"],
-  all_vol[market=="spx"]
-)
-
-spx_90_100_ps_backtest_drawdown_stats<-compute_drawdown_stats(spx_90_100_ps_backtest)
-
-g_spx_90_100_ps<-melt(merge(
-  x=spx_90_100_ps_backtest,
-  y=dof,
-  by.x="date",
-  by.y="date"
-)[,.(
-  date,
-  backtest=cumsum(c(0,diff(pnl.x)))*mean(diff(pnl.y))/mean(diff(pnl.x)),
-  dof=cumsum(c(0,diff(pnl.y)))
-)],id.vars = "date",measure.vars = c("backtest","dof")) %>% 
-  ggplot() +
-  geom_line(aes(x=date,y=value,col=variable),size=2,alpha=0.75)+
-  ggtitle("Quarterly rolling short 100-90 pct SPX put spreads vs DOF")
-
-g_spx_90_100_ps_sl<-rbind(
-  data.table(stop_loss(spx_90_100_ps_backtest[date %in% dof$date],-0.01),stop="01pct"),
-  data.table(stop_loss(spx_90_100_ps_backtest[date %in% dof$date],-0.03),stop="03pct"),
-  data.table(stop_loss(spx_90_100_ps_backtest[date %in% dof$date],-0.05),stop="05pct"),
-  data.table(stop_loss(spx_90_100_ps_backtest[date %in% dof$date],-0.10),stop="10pct")
-)%>%
-ggplot() +
-geom_line(aes(x=date,y=stopped_pnl,col=stop),size=2,alpha=0.75)+
-ggtitle("spx_90_100_ps with stop-loss levels")
-
-
-g_spx_90_100_ps_drawdown_stats <- rbind(
-  data.table(dof_drawdown_stats[,.(date,drawdown)],strategy="dof"),
-  data.table(spx_90_100_ps_backtest_drawdown_stats[date %in% dof$date,.(date,drawdown)],strategy="theoretical")
-) %>%
-ggplot() +
-geom_line(aes(x=date,y=drawdown,col=strategy),size=2,alpha=0.75)+
-  ggtitle("spx_90_100_ps vs DOF drawdowns")
-
-spx_90_100_ps_drawdown_stats_stop<-compute_drawdown_stats(stop_loss(spx_90_100_ps_backtest,-0.03)[,pnl:=stopped_pnl])
-
-g_historical_drawdown_stats_stop <- rbind(
-  data.table(dof_drawdown_stats[,.(date,drawdown)],strategy="dof"),
-  data.table(spx_90_100_ps_drawdown_stats_stop[date %in% dof$date,.(date,drawdown)],strategy="equal")
-) %>%
-ggplot() +
-geom_line(aes(x=date,y=drawdown,col=strategy),size=2,alpha=0.75)+
-  ggtitle("SPX 90-100 put-spread with stop-loss, markets vs DOF drawdowns")
 
 @
 
-\noindent We examine a very simple strategy that seems to have similar drawdown performance with DOF. The
-value of this proxy is that its behaviour is very intuitive and allows for easy judgement of scenario outcomes.
+
 
 \begin{center}
 \begin{tabular}{m{10cm} m{10cm}}
-\Sexpr{make_plot(plot(g_spx_90_100_ps),height="10cm",width="10cm")}
+\Sexpr{make_plot(plot(make_backtest_plot("putspread")),height="10cm",width="10cm")}
 &
-\Sexpr{make_plot(plot(g_spx_90_100_ps_drawdown_stats),height="10cm",width="10cm")}
+\Sexpr{make_plot(plot(make_drawdown_plot("putspread")),height="10cm",width="10cm")}
 \\
-\Sexpr{make_plot(plot(make_sl_plot(
-  w="90-100 ps",
-  backtest=spx_90_100_ps_backtest,
-  v=c("max_draw","median_draw")
-)),height="10cm",width="10cm")}
+\Sexpr{make_plot(plot(make_sl_plot("putspread",c("max_draw","median_draw"))),height="10cm",width="10cm")}
 &
-\Sexpr{make_plot(plot(make_sl_plot(
-  w="90-100 ps",
-  v=c("max_length","median_length"),
-  backtest=spx_90_100_ps_backtest
-)),height="10cm",width="10cm")}
+\Sexpr{make_plot(plot(make_sl_plot("putspread",c("max_length","median_length"))),height="10cm",width="10cm")}
+\\
+\end{tabular}
+\end{center}
+
+\newpage
+\subsection{delta 1 teenies }
+
+<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
+
+
+@
+
+
+
+\begin{center}
+\begin{tabular}{m{10cm} m{10cm}}
+\Sexpr{make_plot(plot(make_backtest_plot("tail1")),height="10cm",width="10cm")}
+&
+\Sexpr{make_plot(plot(make_drawdown_plot("tail1")),height="10cm",width="10cm")}
+\\
+\Sexpr{make_plot(plot(make_sl_plot("tail1",c("max_draw","median_draw"))),height="10cm",width="10cm")}
+&
+\Sexpr{make_plot(plot(make_sl_plot("tail1",c("max_length","median_length"))),height="10cm",width="10cm")}
+\\
+\end{tabular}
+\end{center}
+
+\newpage
+\subsection{delta 2 teenies }
+
+<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
+
+
+@
+
+
+
+\begin{center}
+\begin{tabular}{m{10cm} m{10cm}}
+\Sexpr{make_plot(plot(make_backtest_plot("tail2")),height="10cm",width="10cm")}
+&
+\Sexpr{make_plot(plot(make_drawdown_plot("tail2")),height="10cm",width="10cm")}
+\\
+\Sexpr{make_plot(plot(make_sl_plot("tail2",c("max_draw","median_draw"))),height="10cm",width="10cm")}
+&
+\Sexpr{make_plot(plot(make_sl_plot("tail2",c("max_length","median_length"))),height="10cm",width="10cm")}
+\\
+\end{tabular}
+\end{center}
+
+
+\newpage
+\subsection{delta 5 teenies }
+
+<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
+
+
+@
+
+
+
+\begin{center}
+\begin{tabular}{m{10cm} m{10cm}}
+\Sexpr{make_plot(plot(make_backtest_plot("tail5")),height="10cm",width="10cm")}
+&
+\Sexpr{make_plot(plot(make_drawdown_plot("tail5")),height="10cm",width="10cm")}
+\\
+\Sexpr{make_plot(plot(make_sl_plot("tail5",c("max_draw","median_draw"))),height="10cm",width="10cm")}
+&
+\Sexpr{make_plot(plot(make_sl_plot("tail5",c("max_length","median_length"))),height="10cm",width="10cm")}
 \\
 \end{tabular}
 \end{center}
@@ -1401,49 +1468,6 @@ value of this proxy is that its behaviour is very intuitive and allows for easy 
 \section{Drawdown mitigation: SPX ``teenies''}
 
 <<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
-
-########################################
-# TAIL1, 1 delta P
-########################################
-strategy_TAIL1<-list(
-  leg1=list(
-    model=EP,
-    strike=function(close,vol,maturity){ 
-      put_K<-D2PK(0.01,close,vol,maturity/365)
-      put_K
-    },
-    weight=(+1)
-  )
-)
-
-
-########################################
-# TAIL2, 2 delta P
-########################################
-strategy_TAIL2<-list(
-  leg1=list(
-    model=EP,
-    strike=function(close,vol,maturity){ 
-      put_K<-D2PK(0.02,close,vol,maturity/365)
-      put_K
-    },
-    weight=(+1)
-  )
-)
-
-########################################
-# TAIL5, 5 delta P
-########################################
-strategy_TAIL5<-list(
-  leg1=list(
-    model=EP,
-    strike=function(close,vol,maturity){ 
-      put_K<-D2PK(0.05,close,vol,maturity/365)
-      put_K
-    },
-    weight=(+1)
-  )
-)
 
 
 
@@ -1578,7 +1602,7 @@ combined_backtest<-rbind(
   data.table(weighted_strategy(weights$equal),weight="equal"),
   data.table(weighted_strategy(weights$theoretical),weight="theoretical"),
   data.table(weighted_strategy(weights$historical),weight="historical"),
-  data.table(spx_90_100_ps_backtest,weight="spx90-100ps")
+  data.table(weighted_strategy(weights$putspread),weight="putspread")
 )
 g_combined <- combined_backtest %>% 
   ggplot() +
@@ -1598,22 +1622,48 @@ g_combined <- combined_backtest %>%
 \subsection{3m maturity}
 
 \begin{center}
-\Sexpr{matrix2tabular(backtest_3m_plot_matrix)}
+\scalebox{0.5}{
+\begin{tabular}{c c}
+\Sexpr{matrix2tabular(head(backtest_3m_plot_matrix,nrow(backtest_3m_plot_matrix)/2))}
+&
+\Sexpr{matrix2tabular(tail(backtest_3m_plot_matrix,nrow(backtest_3m_plot_matrix)/2))}
+\\
+\end{tabular}
+}
 \end{center}
 
 \newpage
 \subsection{6m (Jun, Dec) maturities}
 
+
 \begin{center}
-\Sexpr{matrix2tabular(backtest_6m_a_plot_matrix)}
+\scalebox{0.5}{
+\begin{tabular}{c c}
+\Sexpr{matrix2tabular(head(backtest_6m_a_plot_matrix,nrow(backtest_6m_a_plot_matrix)/2))}
+&
+\Sexpr{matrix2tabular(tail(backtest_6m_a_plot_matrix,nrow(backtest_6m_a_plot_matrix)/2))}
+\\
+\end{tabular}
+}
 \end{center}
+
 
 \newpage
 \subsection{6m (Mar, Sep) maturities}
 
+
 \begin{center}
-\Sexpr{matrix2tabular(backtest_6m_b_plot_matrix)}
+\scalebox{0.5}{
+\begin{tabular}{c c}
+\Sexpr{matrix2tabular(head(backtest_6m_b_plot_matrix,nrow(backtest_6m_b_plot_matrix)/2))}
+&
+\Sexpr{matrix2tabular(tail(backtest_6m_b_plot_matrix,nrow(backtest_6m_b_plot_matrix)/2))}
+\\
+\end{tabular}
+}
 \end{center}
+
+
 
 \newpage
 \section{Dataset}

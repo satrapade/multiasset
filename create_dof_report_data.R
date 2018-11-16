@@ -1,4 +1,9 @@
-
+#
+#
+#
+#
+#
+#
 
 source("https://raw.githubusercontent.com/satrapade/latex_utils/master/latex_helpers_v2.R")
 source("https://raw.githubusercontent.com/satrapade/utility/master/utility_functions.R")
@@ -92,8 +97,11 @@ all_vol<-rbind( # data.table with all volatilities
 fwrite(all_vol,paste0("all_vol.csv"))
 write(compress(fread(paste0("all_vol.csv"))),paste0("compressed_all_vol.txt"))
 
-all_vol<-"compressed_all_vol.txt" %>% scan(character()) %>% decompress
-all_vol$Date <- as.Date(all_vol$Date,format="%Y-%m-%d")
+#
+all_vol<-"compressed_all_vol.txt" %>% 
+  scan(character()) %>% 
+  decompress %>% 
+  {.$Date <- as.Date(.$Date,format="%Y-%m-%d");.}
 
 # surface pillars
 all_strikes<-all_vol[,.(strikes=sort(unique(Strike))),keyby=market]
@@ -608,84 +616,6 @@ make_sl_stats<-function(
     SIMPLIFY=FALSE
 ))
 
-make_sl_plot<-function(
-  w,
-  v=c("max_draw","median_draw"),
-  backtest=weighted_strategy( weights=weights[[w]], backtests=all_backtests_3m),
-  sl_levels=seq(0,0.1,length.out = 20)
-){
-  res<-melt(
-    make_sl_stats(w, backtest=backtest,sl_levels = sl_levels)[,c("levels",v),with=FALSE],
-    id.vars = "levels",
-    measure.vars = v
-  ) 
-  res %>%
-  ggplot() +
-  geom_line(aes(x=levels,y=value,col=variable),size=2,alpha=0.75) +
-  ggtitle(paste0(w,"-weight vs DOF drawdowns"))
-}
-
-
-
-#
-#
-make_backtest_plot<-function(
-  w,
-  stop_level=0.025
-)rbind(
-  data.table(dof[,.(date,pnl)],strategy="DOF"),
-  data.table(
-    weighted_strategy(weights=weights[[w]],backtests=all_backtests_3m )[
-      date %in% dof$date,
-      .(date,pnl=(pnl-pnl[1])*sd(diff(dof$pnl))/sd(diff(pnl)))
-    ],
-    strategy="bkt_20"
-  ),
-  data.table(
-    weighted_strategy(weights=weights$equal,backtests=all_backtests_3m, stop_level = 0.03)[
-      date %in% dof$date,
-      .(date, pnl=(pnl-pnl[1])*sd(diff(dof$pnl))/sd(diff(pnl)))
-    ],
-    strategy="bkt_03"
-  ),
-  data.table(
-    weighted_strategy(weights=weights$equal,backtests=all_backtests_3m, stop_level = 0.01)[
-      date %in% dof$date,
-      .(date, pnl=(pnl-pnl[1])*sd(diff(dof$pnl))/sd(diff(pnl)))
-    ],
-    strategy="bkt_01"
-  )
-) %>% 
-  ggplot() +
-  geom_line(aes(x=date,y=pnl,col=strategy),size=2,alpha=0.75)+
-  ggtitle(paste0(w,"-weight all strategies, markets vs DOF"))
-
-
-#
-#
-make_drawdown_plot <- function(
-  w,
-  stop_level=0.025,
-  backtest=weighted_strategy(
-    weights=weights[[w]],
-    backtests=all_backtests_3m,
-    stop_level = -abs(stop_level)
-  )
-)rbind(
-  data.table(dof_drawdown_stats[,.(date,drawdown)],strategy="dof"),
-  data.table(
-    compute_drawdown_stats(
-      backtest[
-      date %in% dof$date,
-      .(date,pnl=(pnl-pnl[1])*sd(diff(dof$pnl))/sd(diff(pnl)))
-    ])[,.(date,drawdown)],
-    strategy=paste0(w)
-  )
-) %>%
-ggplot() +
-geom_line(aes(x=date,y=drawdown,col=strategy),size=2,alpha=0.75) +
-ggtitle(paste0(w,"-weight vs DOF drawdowns, stoploss=",round(100*stop_level,digits=1)))
-
 
 
 # read DOF performance, 
@@ -696,6 +626,17 @@ dof<- fread("dof.csv") %>%
 {.$date<-as.Date(.$date,format="%Y-%m-%d"); .} %>%
 {.$pnl<-cumsum(.$pnl); .}
 
+############################################################################################
+############################################################################################
+############################################################################################
+
+#
+# strategy setup
+#
+
+########################################
+# shedules
+########################################
 
 shedule_3m<-make_roll_dates(
   filter_list=listed_expiries_3m,
@@ -712,10 +653,6 @@ shedule_6m_b<-make_roll_dates(
   vsurfs=all_vol
 )
 
-
-#
-# strategies
-#
 
 ########################################
 # short 90-100 putspread
@@ -889,19 +826,6 @@ strategy_ZCRR<-list(
   )
 )
 
-########################################
-# TAIL2, 2 delta P
-########################################
-strategy_TAIL2<-list(
-  leg1=list(
-    model=EP,
-    strike=function(close,vol,maturity){ 
-      put_K<-D2PK(0.02,close,vol,maturity/365)
-      put_K
-    },
-    weight=(+1)
-  )
-)
 
 ########################################
 # TAIL1, 1 delta P
@@ -946,11 +870,9 @@ strategy_TAIL5<-list(
   )
 )
 
-
-
-#
+########################################
 # list of strategies
-#
+########################################
 strategies<-list(
   SS=strategy_SS,
   CSC=strategy_CSC,
@@ -960,13 +882,14 @@ strategies<-list(
   ZCRR=strategy_ZCRR,
   TAIL1=strategy_TAIL1,
   TAIL2=strategy_TAIL2,
-  TAIL5=strategy_TAIL5
+  TAIL5=strategy_TAIL5,
+  PS_100_90=strategy_90_100_PS
 )
 
 
-#
+########################################
 # list of markets
-#
+########################################
 markets<-c(
   "spx",
   "sx5e",
@@ -974,33 +897,51 @@ markets<-c(
   "nky"
 )
 
-
-make_simple_backtest_plot<-function(
-  backtest,
-  the_market,
-  the_strategy,
-  height="4cm",
-  width="4cm"
-)
-{
-
-  backtest_plot<- backtest %>% 
-    ggplot() + 
-    geom_line(aes(x=date,y=pnl),size=2,alpha=0.75)+ 
-    ggtitle(paste0(toupper(the_market)," : ",the_strategy))+
-    scale_x_date(breaks = pretty_breaks(10)) +
-    theme(plot.title = element_text(size=28))
-  
-  plot_latex<-make_plot(
-    plot(backtest_plot),
-    height=height,
-    width=width,
-    envir=environment()
+########################################
+# strategy portfolios
+########################################
+weights<-list(
+  ##
+  equal=c(
+   CSC=0.33, PSC=0.0, ZCRR=0.0, PR=0.33, CR=0.0, SS=0.33, TAIL1=0, TAIL2=0, TAIL5=0, PS_100_90=0
+  ),
+  ##
+  theoretical=c(
+    CSC=0.33, PSC=0.0, ZCRR=0.0, PR=0.33, CR=0.0, SS=0.33, TAIL1=0, TAIL2=0, TAIL5=0, PS_100_90=0
+  ),
+  ##
+  historical=c(
+    CSC=0.43, PSC=0.19, ZCRR=0.07, PR=0.15, CR=0.0, SS=0.16, TAIL1=0, TAIL2=0, TAIL5=0, PS_100_90=0
+  ),
+  ##
+  putspread=c(
+    CSC=0, PSC=0, ZCRR=0, PR=0, CR=0, SS=0, TAIL1=0, TAIL2=0, TAIL5=0, PS_100_90=1.0
+  ),
+  ##
+  tail1=c(
+    CSC=0, PSC=0, ZCRR=0, PR=0, CR=0, SS=0, TAIL1=1.0, TAIL2=0, TAIL5=0, PS_100_90=0
+  ),
+  ##
+  tail2=c(
+    CSC=0, PSC=0, ZCRR=0, PR=0, CR=0, SS=0, TAIL1=0, TAIL2=1.0, TAIL5=0, PS_100_90=0
+  ),
+  ##
+  tail5=c(
+    CSC=0, PSC=0, ZCRR=0, PR=0, CR=0, SS=0, TAIL1=0, TAIL2=0, TAIL5=1.0, PS_100_90=0
   )
-  
-  plot_latex
-  
-}
+)
+
+########################################
+#
+# stop-loss levels
+#
+########################################
+sl_levels<-seq(0,0.1,length.out=20)
+
+
+############################################################################################
+############################################################################################
+############################################################################################
 
 
 all_backtests_3m<-data.table(
@@ -1184,5 +1125,4 @@ dof_drawdown_stats <- compute_drawdown_stats(dof)[,.(
   teeny2=round(100*spx_tail2_backtest[(date>date_start) & (date<date_draw),max(pnl-pnl[1])],digits=2),
   teeny5=round(100*spx_tail5_backtest[(date>date_start) & (date<date_draw),max(pnl-pnl[1])],digits=2)
 ),keyby=episode]
-
 

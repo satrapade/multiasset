@@ -930,6 +930,16 @@ sl_levels<-seq(0,0.1,length.out=20)
 # plotting functions
 #
 
+plot_backtest<-function(backtest){
+
+  g<- backtest %>% 
+    ggplot() + 
+    geom_line(aes(x=date,y=pnl),size=2,alpha=0.75)+ 
+    scale_x_date(breaks = pretty_breaks(10)) +
+    theme(plot.title = element_text(size=28))
+  g
+  
+}
 
 #
 #
@@ -995,15 +1005,15 @@ make_drawdown_plot <- function(
   data.table(
     compute_drawdown_stats(
       backtest[
-      date %in% dof$date,
-      .(date,pnl=(pnl-pnl[1])*sd(diff(dof$pnl))/sd(diff(pnl)))
-    ])[,.(date,drawdown)],
+        date %in% dof$date,
+        .(date,pnl=(pnl-pnl[1])*sd(diff(dof$pnl))/sd(diff(pnl)))
+        ])[,.(date,drawdown)],
     strategy=paste0(w)
   )
 ) %>%
-ggplot() +
-geom_line(aes(x=date,y=drawdown,col=strategy),size=2,alpha=0.75) +
-ggtitle(paste0(w,"-weight vs DOF drawdowns, stoploss=",round(100*stop_level,digits=1)))
+  ggplot() +
+  geom_line(aes(x=date,y=drawdown,col=strategy),size=2,alpha=0.75) +
+  ggtitle(paste0(w,"-weight vs DOF drawdowns, stoploss=",round(100*stop_level,digits=1)))
 
 #
 #
@@ -1011,49 +1021,33 @@ make_backtest_plot<-function(
   w,
   stop_levels=c(0.20,0.03,0.01),
   stop_type="SL"
-)rbind(
-  data.table(dof[,.(date,pnl)],strategy="DOF"),
-  data.table(
-    weighted_strategy(
-      weights=weights[[w]],
-      backtests=all_backtests_3m, 
-      stop_level = stop_levels[1], 
-      stop_type=stop_type 
-    )[
-      date %in% dof$date,
-      .(date,pnl=(pnl-pnl[1])*sd(diff(dof$pnl))/sd(diff(pnl)))
-    ],
-    strategy="bkt_20"
-  ),
-  data.table(
-    weighted_strategy(
-      weights=weights[[w]],
-      backtests=all_backtests_3m, 
-      stop_level = stop_levels[2], 
-      stop_type=stop_type
-    )[
-      date %in% dof$date,
-      .(date, pnl=(pnl-pnl[1])*sd(diff(dof$pnl))/sd(diff(pnl)))
-    ],
-    strategy="bkt_03"
-  ),
-  data.table(
-    weighted_strategy(
-      weights=weights[[w]],
-      backtests=all_backtests_3m, 
-      stop_level = stop_levels[3], 
-      stop_type=stop_type
-    )[
-      date %in% dof$date,
-      .(date, pnl=(pnl-pnl[1])*sd(diff(dof$pnl))/sd(diff(pnl)))
-    ],
-    strategy="bkt_01"
+){
+  
+  backtests<-mapply(
+    function(stop_level)data.table(
+      weighted_strategy(
+        weights=weights[[w]],
+        backtests=all_backtests_3m, 
+        stop_level = stop_level, 
+        stop_type=stop_type 
+      )[
+        date %in% dof$date,
+        .(date,pnl=(pnl-pnl[1])*sd(diff(dof$pnl))/sd(diff(pnl)))
+        ],
+      strategy=paste0("bkt_",round(stop_level*100,digits=0))
+    ),
+    stop_level=stop_levels,
+    SIMPLIFY=FALSE
   )
-) %>% 
-  ggplot() +
-  geom_line(aes(x=date,y=pnl,col=strategy),size=2,alpha=0.75)+
-  ggtitle(paste0(w,"-weight all strategies, markets vs DOF"))
-
+  
+  res<-do.call(rbind,c(list(data.table(dof[,.(date,pnl)],strategy="DOF")),backtests))
+  
+  res %>% 
+    ggplot() +
+    geom_line(aes(x=date,y=pnl,col=strategy),size=2,alpha=0.75)+
+    ggtitle(paste0(w,"-weight all strategies, markets vs DOF"))
+  
+}
 
 @
 
@@ -1933,6 +1927,21 @@ synthetic_shedule<-make_roll_dates(
   vsurfs=synthetic_vol
 )
 
+synthetic_95_call<-make_strategy(
+   strategy=list(
+      leg1=list(model=EC,strike=function(close,vol,maturity){ close*0.95 },weight=(+1))
+    ),
+    shedule=synthetic_shedule,
+    volsurf=synthetic_vol
+)
+
+synthetic_105_call<-make_strategy(
+   strategy=list(
+      leg1=list(model=EC,strike=function(close,vol,maturity){ close*1.05 },weight=(-1))
+    ),
+    shedule=synthetic_shedule,
+    volsurf=synthetic_vol
+)
   
 g_synthetic_90_100_ps_backtest<-make_strategy(
    strategy=list(
@@ -2026,7 +2035,27 @@ the backtest engine is working as expected.
 \end{tabular}
 \end{center}
 
-
+\begin{center}
+\begin{tabular}{m{10cm} m{10cm}}
+\rowcolor{gray!20}
+\multicolumn{2}{c}{ Synthetic market, constant price at 100, constant vol at 10\%, 25bp SL, TP } 
+\\
+\Sexpr{make_plot(plot(
+    plot_backtest(stop_loss(
+      synthetic_95_call,
+      max_loss=(-0.0025)
+    )[,pnl:=stopped_pnl])
+),height="10cm",width="10cm")}
+&
+\Sexpr{make_plot(plot(
+    plot_backtest(take_profit(
+      synthetic_105_call,
+      max_profit=(+0.0025)
+    )[,pnl:=stopped_pnl])
+),height="10cm",width="10cm")}
+\\
+\end{tabular}
+\end{center}
 
 \end{document}
 

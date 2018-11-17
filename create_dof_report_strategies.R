@@ -1,6 +1,38 @@
 #
 # strategy setup
 #
+source("https://raw.githubusercontent.com/satrapade/utility/master/utility_functions.R")
+
+########################################
+# shedules
+########################################
+
+all_vol<-"compressed_all_vol.txt" %>% 
+  scan(character()) %>% 
+  decompress %>% 
+  {.$Date <- as.Date(.$Date,format="%Y-%m-%d");.}
+
+# surface pillars
+all_strikes<-all_vol[,.(strikes=sort(unique(Strike))),keyby=market]
+all_maturities<-all_vol[,.(maturities=sort(unique(Days))),keyby=market]
+
+listed_expiries_3m<-list(
+  quote(month %in% c("March","June","September","December")),
+  quote(wday=="Friday"),
+  quote(wday_count==3)
+)
+
+listed_expiries_6m_a<-list(
+  quote(month %in% c("June","December")),
+  quote(wday=="Friday"),
+  quote(wday_count==3)
+)
+
+listed_expiries_6m_b<-list(
+  quote(month %in% c("March","September")),
+  quote(wday=="Friday"),
+  quote(wday_count==3)
+)
 
 ########################################
 # shedules

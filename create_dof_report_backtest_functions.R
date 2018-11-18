@@ -381,7 +381,7 @@ stop_loss<-function(
   cum_period_stop<-cumsum(below_stop)
   period_below_stop<-(cum_period_stop-cum_period_stop[carry_fwd_seq_along])>0
   pnl_diff<-c(strategy$pnl[1],diff(strategy$pnl))
-  lagged_stop<-c(FALSE,head(period_below_stop,-1))
+  lagged_stop<-c(FALSE,FALSE,head(period_below_stop,-2))
   stopped_pnl_diff<-pnl_diff*(!lagged_stop)
   stopped_pnl<-cumsum(stopped_pnl_diff)
   data.table(
@@ -411,7 +411,7 @@ take_profit<-function(
   cum_period_profit<-cumsum(above_target)
   period_above_target<-(cum_period_profit-cum_period_profit[carry_fwd_seq_along])>0
   pnl_diff<-c(strategy$pnl[1],diff(strategy$pnl))
-  lagged_profit<-c(FALSE,period_above_target[-1])
+  lagged_profit<-c(FALSE,head(period_above_target,-1))
   stopped_pnl_diff<-pnl_diff*(!lagged_profit)
   stopped_pnl<-cumsum(stopped_pnl_diff)
   data.table(

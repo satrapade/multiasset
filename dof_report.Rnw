@@ -123,7 +123,7 @@ make_simple_backtest_plot<-function(
 make_sl_plot<-function(
   w,
   v=c("max_draw","median_draw"),
-  backtest=weighted_strategy( weights=weights[[w]], backtests=all_backtests_3m),
+  backtest=weighted_strategy( weights=weights[[w]], backtests=all_backtests_3m)[date %in% dof$date],
   sl_levels=seq(0,0.1,length.out = 20)
 ){
   res<-melt(
@@ -168,7 +168,8 @@ make_drawdown_plot <- function(
 make_backtest_plot<-function(
   w,
   stop_levels=c(0.20,0.03,0.01),
-  stop_type="SL"
+  stop_type="SL",
+  with_DOF=TRUE
 ){
   
   backtests<-mapply(
@@ -188,7 +189,11 @@ make_backtest_plot<-function(
     SIMPLIFY=FALSE
   )
   
-  res<-do.call(rbind,c(list(data.table(dof[,.(date,pnl)],strategy="DOF")),backtests))
+  res<-if(with_DOF){
+    do.call(rbind,c(list(data.table(dof[,.(date,pnl)],strategy="DOF")),backtests))
+  }else{
+    do.call(rbind,backtests)
+  }
   
   res %>% 
     ggplot() +
@@ -354,9 +359,9 @@ geom_line(aes(x=date,y=drawdown),size=2,col=ggcol(2)[2])
 \hline
 \rowcolor{gray!20}
 \multicolumn{2}{c}{\bf DOF Proxy} \\
-\Sexpr{make_plot(plot(make_backtest_plot("theoretical",stop_levels=0.05,stop_type="SL")),height="10cm",width="10cm")}
+\Sexpr{make_plot(plot(make_backtest_plot("equal",stop_levels=0.05,stop_type="SL")),height="10cm",width="10cm")}
 &
-\Sexpr{make_plot(plot(make_drawdown_plot("theoretical",stop_level=0.05)),height="10cm",width="10cm")}
+\Sexpr{make_plot(plot(make_drawdown_plot("equal",stop_level=0.05)),height="10cm",width="10cm")}
 \\
 \end{tabular}
 \end{center}
@@ -374,13 +379,89 @@ geom_line(aes(x=date,y=drawdown),size=2,col=ggcol(2)[2])
 
 \begin{center}
 \begin{tabular}{m{10cm} m{10cm}}
-\Sexpr{make_plot(plot(make_sl_plot("theoretical",c("max_draw","median_draw"))),height="10cm",width="10cm")}
+\Sexpr{make_plot(plot(make_sl_plot("equal",c("max_draw","median_draw"))),height="10cm",width="10cm")}
 &
-\Sexpr{make_plot(plot(make_sl_plot("theoretical",c("max_length","median_length"))),height="10cm",width="10cm")}
+\Sexpr{make_plot(plot(make_sl_plot("equal",c("max_length","median_length"))),height="10cm",width="10cm")}
 \\
-\Sexpr{make_plot(plot(make_sl_plot("theoretical",c("sharpe"),sl_levels=seq(0,0.1,length.out=100))),height="10cm",width="10cm")}
+\Sexpr{make_plot(plot(make_sl_plot("equal",c("sharpe"),sl_levels=seq(0,0.25,length.out=100))),height="10cm",width="10cm")}
 &
-\Sexpr{make_plot(plot(make_sl_plot("theoretical",c("pnl"),sl_levels=seq(0,0.1,length.out=100))),height="10cm",width="10cm")}
+\Sexpr{make_plot(plot(make_sl_plot("equal",c("pnl"),sl_levels=seq(0,0.25,length.out=100))),height="10cm",width="10cm")}
+\\
+\end{tabular}
+\end{center}
+
+\vskip 5mm
+
+\begin{center}
+\Sexpr{make_plot(plot(
+  make_backtest_plot("equal",stop_levels=c(0.01,0.02,0.05,0.1,0.2),stop_type="SL",with_DOF=FALSE)
+),height="15cm",width="15cm")}
+\end{center}
+
+\newpage
+\section{The 90-100 PS closely matched DOF performance}
+
+<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
+
+
+@
+
+
+
+\begin{center}
+\begin{tabular}{m{10cm} m{10cm}}
+\Sexpr{make_plot(plot(make_backtest_plot("putspread",stop_levels=0.2)),height="10cm",width="10cm")}
+&
+\Sexpr{make_plot(plot(make_drawdown_plot("putspread",stop_level=0.2)),height="10cm",width="10cm")}
+\\
+\Sexpr{make_plot(plot(
+make_sl_plot("putspread",c("max_draw","median_draw"),sl_levels=seq(0,0.25,length.out = 100))
+),height="10cm",width="10cm")}
+&
+\Sexpr{make_plot(plot(
+make_sl_plot("putspread",c("max_length","median_length"),sl_levels=seq(0,0.25,length.out = 100))
+),height="10cm",width="10cm")}
+\\
+\end{tabular}
+\end{center}
+
+\newpage
+\section{return quality vs stop-loss level}
+
+<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
+
+quality_df<-do.call(rbind,mapply(function(sl_level){
+  strat<-weighted_strategy(weights[["equal"]])[date %in% dof$date]
+  strat_len<- as.integer(sum(diff(strat$date)))
+  proxy_pnl<-stop_loss(strat,max_loss=-abs(sl_level))
+  proxy_stats<-compute_drawdown_stats(proxy_pnl[,pnl:=stopped_pnl])
+  the_draw<-0.05
+  data.table(
+    sl_level=sl_level,
+    pnl=max(proxy_stats$whole_pnl)*sl_level/max(proxy_stats$max_draw)*365/strat_len,
+    sharpe=max(proxy_stats$whole_sharpe)
+  )
+},
+sl_level=seq(0.00250,0.10,length.out=50),
+SIMPLIFY=FALSE
+))
+
+g_quality_pnl<-quality_df %>% ggplot() + geom_line(aes(x=sl_level,y=pnl))+
+    ggtitle("DOF Proxy stop-loss level vs P&L")
+
+g_quality_sharpe<-quality_df %>% ggplot() + geom_line(aes(x=sl_level,y=sharpe))+
+    ggtitle("DOF Proxy stop-loss level vs Sharpe")
+
+
+@
+
+\vskip 5mm
+
+\begin{center}
+\begin{tabular}{m{10cm} m{10cm}}
+\Sexpr{make_plot(plot(g_quality_pnl),height="10cm",width="10cm")}
+&
+\Sexpr{make_plot(plot(g_quality_sharpe),height="10cm",width="10cm")}
 \\
 \end{tabular}
 \end{center}
@@ -397,8 +478,6 @@ geom_line(aes(x=date,y=drawdown),size=2,col=ggcol(2)[2])
 that post-selloff rebounds are among the highest-sharpe periods in a risk-premium strategy's life. Stop-losses limit
 drawdowns but also deny us participation in rebounds. On balance, return quality reduction dominates. This means that
 we are better off reducing position sizes rather than tightening stops. 
-
-
 
 
 \newpage
@@ -499,28 +578,7 @@ Short Straddles & 16 \% \\
 \end{tabular}
 \end{center}
 
-\newpage
-\subsection{PS 90 100 }
 
-<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
-
-
-@
-
-
-
-\begin{center}
-\begin{tabular}{m{10cm} m{10cm}}
-\Sexpr{make_plot(plot(make_backtest_plot("putspread",stop_levels=0.2)),height="10cm",width="10cm")}
-&
-\Sexpr{make_plot(plot(make_drawdown_plot("putspread",stop_level=0.2)),height="10cm",width="10cm")}
-\\
-\Sexpr{make_plot(plot(make_sl_plot("putspread",c("max_draw","median_draw"))),height="10cm",width="10cm")}
-&
-\Sexpr{make_plot(plot(make_sl_plot("putspread",c("max_length","median_length"))),height="10cm",width="10cm")}
-\\
-\end{tabular}
-\end{center}
 
 \newpage
 \subsection{delta 1 teenies }
@@ -534,60 +592,13 @@ Short Straddles & 16 \% \\
 
 \begin{center}
 \begin{tabular}{m{10cm} m{10cm}}
-\Sexpr{make_plot(plot(make_backtest_plot("tail1")),height="10cm",width="10cm")}
+\Sexpr{make_plot(plot(make_backtest_plot("tail1",stop_levels=0.010,stop_type="TP")),height="10cm",width="10cm")}
 &
 \Sexpr{make_plot(plot(make_drawdown_plot("tail1")),height="10cm",width="10cm")}
 \\
 \Sexpr{make_plot(plot(make_sl_plot("tail1",c("max_draw","median_draw"))),height="10cm",width="10cm")}
 &
 \Sexpr{make_plot(plot(make_sl_plot("tail1",c("max_length","median_length"))),height="10cm",width="10cm")}
-\\
-\end{tabular}
-\end{center}
-
-\newpage
-\subsection{delta 2 teenies }
-
-<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
-
-
-@
-
-
-
-\begin{center}
-\begin{tabular}{m{10cm} m{10cm}}
-\Sexpr{make_plot(plot(make_backtest_plot("tail2")),height="10cm",width="10cm")}
-&
-\Sexpr{make_plot(plot(make_drawdown_plot("tail2")),height="10cm",width="10cm")}
-\\
-\Sexpr{make_plot(plot(make_sl_plot("tail2",c("max_draw","median_draw"))),height="10cm",width="10cm")}
-&
-\Sexpr{make_plot(plot(make_sl_plot("tail2",c("max_length","median_length"))),height="10cm",width="10cm")}
-\\
-\end{tabular}
-\end{center}
-
-
-\newpage
-\subsection{delta 5 teenies }
-
-<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
-
-
-@
-
-
-
-\begin{center}
-\begin{tabular}{m{10cm} m{10cm}}
-\Sexpr{make_plot(plot(make_backtest_plot("tail5")),height="10cm",width="10cm")}
-&
-\Sexpr{make_plot(plot(make_drawdown_plot("tail5")),height="10cm",width="10cm")}
-\\
-\Sexpr{make_plot(plot(make_sl_plot("tail5",c("max_draw","median_draw"))),height="10cm",width="10cm")}
-&
-\Sexpr{make_plot(plot(make_sl_plot("tail5",c("max_length","median_length"))),height="10cm",width="10cm")}
 \\
 \end{tabular}
 \end{center}

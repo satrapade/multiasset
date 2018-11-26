@@ -1,0 +1,1208 @@
+
+\documentclass{article}
+
+
+\usepackage[portrait, headheight = 0cm, margin=0.25cm, top = 0.25cm]{geometry} 
+\usepackage[export]{adjustbox} 
+\usepackage{graphicx}
+\usepackage[dvipsnames,table]{xcolor} % [dvipsnames,table] for setting colors \usepackage{amsmath} \usepackage{xfrac}
+\usepackage{tikz}
+\usetikzlibrary{shapes.geometric}
+\usetikzlibrary{shapes.misc}
+%\usetikzlibrary{external}
+%\tikzexternalize % activate!
+%\usepackage{sparklines}
+\usepackage{xfrac}
+\usepackage[space]{grffile}
+\usepackage{hyperref}
+\usepackage{listings}
+
+\DeclareRobustCommand\Tstrut{\rule{0pt}{2.6ex}}         % = `top' strut
+\DeclareRobustCommand\Bstrut{\rule[-0.9ex]{0pt}{0pt}}   % = `bottom' strut
+\renewcommand{\familydefault}{\sfdefault}
+
+
+\begin{document}
+
+
+<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
+
+source("https://raw.githubusercontent.com/satrapade/latex_utils/master/latex_helpers_v2.R")
+
+source("https://raw.githubusercontent.com/satrapade/utility/master/utility_functions.R")
+source("https://raw.githubusercontent.com/satrapade/utility/master/nn_cast.R")
+
+temp_files<-list.files(
+    path="figure",
+    pattern="pdf$",
+    recursive = FALSE,
+    full.names = TRUE
+)
+file.remove(temp_files)
+
+require(data.table)
+require(scales)
+require(RcppRoll)
+require(magrittr)
+require(fasttime)
+require(lubridate)
+require(scales)
+require(fields)
+require(gsubfn)
+require(stringi)
+require(Matrix)
+require(akima)
+require(ggplot2)
+
+
+source("create_dof_report_backtest_functions.R")
+
+# read DOF performance, 
+# convert character to Date
+# convert daily P&L to cummulative P&L
+dof<- fread("dof.csv") %>% 
+{setNames(.,tolower(names(.)))} %>%
+{.$date<-as.Date(.$date,format="%Y-%m-%d"); .} %>%
+{.$pnl<-cumsum(.$pnl); .}
+
+
+
+@
+
+<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
+source("create_dof_report_strategies.R")
+@
+
+<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
+#
+# plotting functions
+#
+
+plot_backtest<-function(backtest){
+
+  g<- backtest %>% 
+    ggplot() + 
+    geom_line(aes(x=date,y=pnl),size=2,alpha=0.75)+ 
+    scale_x_date(breaks = pretty_breaks(10)) +
+    theme(plot.title = element_text(size=28))
+  g
+  
+}
+
+#
+#
+make_simple_backtest_plot<-function(
+  backtest,
+  the_market,
+  the_strategy,
+  height="4cm",
+  width="4cm"
+)
+{
+
+  backtest_plot<- backtest %>% 
+    ggplot() + 
+    geom_line(aes(x=date,y=pnl),size=2,alpha=0.75)+ 
+    ggtitle(paste0(toupper(the_market)," : ",the_strategy))+
+    scale_x_date(breaks = pretty_breaks(10)) +
+    theme(plot.title = element_text(size=28))
+  
+  plot_latex<-make_plot(
+    plot(backtest_plot),
+    height=height,
+    width=width,
+    envir=environment()
+  )
+  
+  plot_latex
+  
+}
+
+#
+#
+make_sl_plot<-function(
+  w,
+  v=c("max_draw","median_draw"),
+  backtest=weighted_strategy( weights=weights[[w]], backtests=all_backtests_3m)[date %in% dof$date],
+  sl_levels=seq(0,0.1,length.out = 20)
+){
+  res<-melt(
+    make_sl_stats(w, backtest=backtest,sl_levels = sl_levels)[,c("levels",v),with=FALSE],
+    id.vars = "levels",
+    measure.vars = v
+  ) 
+  res %>%
+  ggplot() +
+  geom_line(aes(x=levels,y=value,col=variable),size=2,alpha=0.75) +
+  ggtitle(paste0(w,"-weight vs DOF drawdowns"))
+}
+
+
+#
+#
+make_drawdown_plot <- function(
+  w,
+  stop_level=0.025,
+  backtest=weighted_strategy(
+    weights=weights[[w]],
+    backtests=all_backtests_3m,
+    stop_level = -abs(stop_level)
+  )
+)rbind(
+  data.table(dof_drawdown_stats[,.(date,drawdown)],strategy="DOF"),
+  data.table(
+    compute_drawdown_stats(
+      backtest[
+        date %in% dof$date,
+        .(date,pnl=(pnl-pnl[1])*sd(diff(dof$pnl))/sd(diff(pnl)))
+        ])[,.(date,drawdown)],
+    strategy=paste0("bkt_",round(100*abs(stop_level),digits=0))
+  )
+) %>%
+  ggplot() +
+  geom_line(aes(x=date,y=drawdown,col=strategy),size=2,alpha=0.75) +
+  ggtitle(paste0(w,"-weight vs DOF drawdowns, stoploss=",round(100*stop_level,digits=1)))
+
+#
+#
+make_backtest_plot<-function(
+  w,
+  stop_levels=c(0.20,0.03,0.01),
+  stop_type="SL",
+  with_DOF=TRUE
+){
+  
+  backtests<-mapply(
+    function(stop_level)data.table(
+      weighted_strategy(
+        weights=weights[[w]],
+        backtests=all_backtests_3m, 
+        stop_level = stop_level, 
+        stop_type=stop_type 
+      )[
+        date %in% dof$date,
+        .(date,pnl=(pnl-pnl[1])*sd(diff(dof$pnl))/sd(diff(pnl)))
+        ],
+      strategy=paste0("bkt_",round(abs(stop_level)*100,digits=0))
+    ),
+    stop_level=stop_levels,
+    SIMPLIFY=FALSE
+  )
+  
+  res<-if(with_DOF){
+    do.call(rbind,c(list(data.table(dof[,.(date,pnl)],strategy="DOF")),backtests))
+  }else{
+    do.call(rbind,backtests)
+  }
+  
+  res %>% 
+    ggplot() +
+    geom_line(aes(x=date,y=pnl,col=strategy),size=2,alpha=0.75)+
+    ggtitle(paste0(w,"-weight all strategies, markets vs DOF"))
+  
+}
+
+@
+
+
+
+<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
+
+x<-make_strategy(
+  strategy=strategies[[1]],
+  shedule=shedule_3m[market=="spx"],
+  volsurf=all_vol[market=="spx"]
+)
+
+
+all_backtests_3m<-readRDS("all_backtests_3m.RData")[,
+   plot:=mapply(make_simple_backtest_plot,backtest=backtest,the_market=market,the_strategy=strategy)
+]
+
+
+all_backtests_6m_a<-readRDS("all_backtests_6m_a.RData")[,
+   plot:=mapply(make_simple_backtest_plot,backtest=backtest,the_market=market,the_strategy=strategy)
+]
+
+
+all_backtests_6m_b<-readRDS("all_backtests_6m_b.RData")[,
+   plot:=mapply(make_simple_backtest_plot,backtest=backtest,the_market=market,the_strategy=strategy)
+]
+
+NNcast<-function(
+  data,
+  i_name="date",
+  j_name="id",
+  v_name="value",
+  fun=sum,
+  scrub_fun=function(x)scrub(x,default=0),
+  scrub=function(x, default = 0){
+    if(length(x) == 0) return(default)
+    x[which(!is.finite(x))] <- default
+    return(x)
+  }
+){
+  i_expr<-parse(text=as.character(i_name))
+  j_expr<-parse(text=as.character(j_name))
+  v_expr<-parse(text=as.character(v_name))
+  i<-as.character(eval(i_expr,envir=data))
+  j<-as.character(eval(j_expr,envir=data))
+  x<-eval(v_expr,envir=data)
+  df<-data.table(i=i,j=j,x=x)[,.(x=fun(x)),keyby="i,j"]
+  is<-sort(unique(df$i))
+  js<-sort(unique(df$j))
+  res<-matrix(
+    do.call(class(x),list(1)),
+    nrow=length(is),
+    ncol=length(js),
+    dimnames = list(is,js)
+  )
+  i<-match(df$i,rownames(res))
+  j<-match(df$j,colnames(res))
+  res[cbind(i,j)[!is.na(df$x),]]<-df$x[!is.na(df$x)]
+  scrub_fun(res)
+}
+
+
+backtest_3m_plot_matrix<-NNcast(
+  all_backtests_3m,
+  i_name="strategy",
+  j_name="market",
+  v_name="plot",
+  fun=identity,
+  scrub_fun = identity
+)
+
+backtest_6m_a_plot_matrix<-NNcast(
+  all_backtests_6m_a,
+  i_name="strategy",
+  j_name="market",
+  v_name="plot",
+  fun=identity,
+  scrub_fun = identity
+)
+
+backtest_6m_b_plot_matrix<-NNcast(
+  all_backtests_6m_b,
+  i_name="strategy",
+  j_name="market",
+  v_name="plot",
+  fun=identity,
+  scrub_fun = identity
+)
+
+
+@
+
+
+\tableofcontents
+
+\newpage
+
+\section*{Document version}
+<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
+require(digest)
+require(Hmisc)
+@
+\vskip 5mm
+
+\begin{center}
+\begin{tabular}{l l}
+\hline
+timestamp & \Sexpr{latexTranslate(as.character(Sys.timeDate()))} \\
+data and code checksum & \Sexpr{digest(all_vol)} \\
+git id & \Sexpr{system("git rev-parse HEAD",TRUE)} \\
+user & \Sexpr{latexTranslate(gsub("\\\\","/",system("whoami",TRUE)))} \\
+\hline
+\end{tabular}
+\end{center}
+
+
+<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
+
+ggcol <- hue_pal(h = c(0, 360) + 15, c = 100, l = 65, h.start = 0, direction = 1)
+
+dof_drawdown_stats<-compute_drawdown_stats(dof)
+
+g_dof <- dof %>% 
+ggplot() +
+geom_line(aes(x=date,y=pnl),size=2,col=ggcol(2)[2])
+
+g_drawdown <- dof_drawdown_stats %>%
+ggplot() +
+geom_line(aes(x=date,y=drawdown),size=2,col=ggcol(2)[2])
+
+
+
+
+@
+
+
+\newpage
+\section{DOF performance}
+
+\begin{center}
+\begin{tabular}{m{10cm} m{10cm}}
+\hline
+\rowcolor{gray!20}
+\multicolumn{1}{c}{\bf Performance}
+&
+\multicolumn{1}{c}{\bf Drawdown}
+\\
+\hline
+\rowcolor{gray!20}
+\multicolumn{2}{c}{\bf DOF} \\
+\Sexpr{make_plot(plot(g_dof),height="10cm",width="10cm")}
+&
+\Sexpr{make_plot(plot(g_drawdown),height="10cm",width="10cm")}
+\\
+\hline
+\rowcolor{gray!20}
+\multicolumn{2}{c}{\bf DOF Proxy} \\
+\Sexpr{make_plot(plot(make_backtest_plot("equal",stop_levels=0.05,stop_type="SL")),height="10cm",width="10cm")}
+&
+\Sexpr{make_plot(plot(make_drawdown_plot("equal",stop_level=0.05)),height="10cm",width="10cm")}
+\\
+\end{tabular}
+\end{center}
+
+\begin{itemize}
+\item We wish to investigate the cause of infrequent, relatively large drawdowns.
+\item In addition, we are looking for a simple, intuitive proxy that can be used to understand DOF performance.
+\item Moreover, we investigate 3 different mitigation strategies: sizing, stop-loss and a positive tail-risk overlay.
+\end{itemize}
+
+\newpage
+\section{DOF Proxy: Return quality vs stop-loss level}
+<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
+@
+
+\begin{center}
+\begin{tabular}{m{10cm} m{10cm}}
+\Sexpr{make_plot(plot(make_sl_plot("equal",c("max_draw","median_draw"))),height="10cm",width="10cm")}
+&
+\Sexpr{make_plot(plot(make_sl_plot("equal",c("max_length","median_length"))),height="10cm",width="10cm")}
+\\
+\Sexpr{make_plot(plot(make_sl_plot("equal",c("sharpe"),sl_levels=seq(0,0.25,length.out=100))),height="10cm",width="10cm")}
+&
+\Sexpr{make_plot(plot(make_sl_plot("equal",c("pnl"),sl_levels=seq(0,0.25,length.out=100))),height="10cm",width="10cm")}
+\\
+\end{tabular}
+\end{center}
+
+\vskip 5mm
+
+\begin{center}
+\Sexpr{make_plot(plot(
+  make_backtest_plot("equal",stop_levels=c(0.01,0.02,0.05,0.1,0.2),stop_type="SL",with_DOF=FALSE)
+),height="15cm",width="15cm")}
+\end{center}
+
+\newpage
+\section{The 90-100 PS closely matched DOF performance}
+
+<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
+
+
+@
+
+
+
+\begin{center}
+\begin{tabular}{m{10cm} m{10cm}}
+\Sexpr{make_plot(plot(make_backtest_plot("putspread",stop_levels=0.2)),height="10cm",width="10cm")}
+&
+\Sexpr{make_plot(plot(make_drawdown_plot("putspread",stop_level=0.2)),height="10cm",width="10cm")}
+\\
+\Sexpr{make_plot(plot(
+make_sl_plot("putspread",c("max_draw","median_draw"),sl_levels=seq(0,0.25,length.out = 100))
+),height="10cm",width="10cm")}
+&
+\Sexpr{make_plot(plot(
+make_sl_plot("putspread",c("max_length","median_length"),sl_levels=seq(0,0.25,length.out = 100))
+),height="10cm",width="10cm")}
+\\
+\end{tabular}
+\end{center}
+
+\newpage
+\section{return quality vs stop-loss level}
+
+<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
+
+quality_df<-do.call(rbind,mapply(function(sl_level){
+  strat<-weighted_strategy(weights[["equal"]])[date %in% dof$date]
+  strat_len<- as.integer(sum(diff(strat$date)))
+  proxy_pnl<-stop_loss(strat,max_loss=-abs(sl_level))
+  proxy_stats<-compute_drawdown_stats(proxy_pnl[,pnl:=stopped_pnl])
+  the_draw<-0.05
+  data.table(
+    sl_level=sl_level,
+    pnl=max(proxy_stats$whole_pnl)*sl_level/max(proxy_stats$max_draw)*365/strat_len,
+    sharpe=max(proxy_stats$whole_sharpe)
+  )
+},
+sl_level=seq(0.00250,0.10,length.out=50),
+SIMPLIFY=FALSE
+))
+
+g_quality_pnl<-quality_df %>% ggplot() + geom_line(aes(x=sl_level,y=pnl))+
+    ggtitle("DOF Proxy stop-loss level vs P&L")
+
+g_quality_sharpe<-quality_df %>% ggplot() + geom_line(aes(x=sl_level,y=sharpe))+
+    ggtitle("DOF Proxy stop-loss level vs Sharpe")
+
+
+@
+
+\vskip 5mm
+
+\begin{center}
+\begin{tabular}{m{10cm} m{10cm}}
+\Sexpr{make_plot(plot(g_quality_pnl),height="10cm",width="10cm")}
+&
+\Sexpr{make_plot(plot(g_quality_sharpe),height="10cm",width="10cm")}
+\\
+\end{tabular}
+\end{center}
+
+\vskip 5mm 
+
+\begin{center}
+\framebox{\centering\parbox{12.5cm}{``Small positions with wide stops'' are better than ``Large positions with tight stops''}}
+\end{center}
+
+\vskip 5mm 
+
+\noindent In general, we would expect stop-losses to reduce return quality. The intuition behind this expectation is
+that post-selloff rebounds are among the highest-sharpe periods in a risk-premium strategy's life. Stop-losses limit
+drawdowns but also deny us participation in rebounds. On balance, return quality reduction dominates. This means that
+we are better off reducing position sizes rather than tightening stops. 
+
+
+\newpage
+\section{Weighted strategy backtests}
+
+<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
+
+@
+\subsection{equal weights}
+
+\begin{center}
+\begin{tabular}{m{10cm} m{10cm}}
+\Sexpr{make_plot(plot(make_backtest_plot("equal",stop_levels=0.05,stop_type="SL")),height="10cm",width="10cm")}
+&
+\Sexpr{make_plot(plot(make_drawdown_plot("equal",stop_level=0.05)),height="10cm",width="10cm")}
+\\
+\Sexpr{make_plot(plot(make_sl_plot("equal",c("max_draw","median_draw"))),height="10cm",width="10cm")}
+&
+\Sexpr{make_plot(plot(make_sl_plot("equal",c("max_length","median_length"))),height="10cm",width="10cm")}
+\\
+\end{tabular}
+\end{center}
+
+\vskip 5mm
+
+\noindent Tighter stops reduce the depth of drawdowns but increase their length. This is fairly typical
+for risk-premium collection strategies.
+
+\newpage
+\subsection{theoretical weights  }
+
+<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
+
+
+@
+
+
+\begin{center}
+\begin{tabular}{l l}
+\hline
+\rowcolor{gray!20}
+\multicolumn{2}{c}{Portfolio composition} \\
+Zero Cost Call Spread Collars & 33 \% \\
+Zero Cost Put Spread Collars & 0 \% \\
+Zero Cost Risk Reversals & 0 \% \\
+Zero Cost Put Spread Ratios & 33 \% \\
+Short Straddles & 33 \% \\
+\end{tabular}
+\end{center}
+
+\begin{center}
+\begin{tabular}{m{10cm} m{10cm}}
+\Sexpr{make_plot(plot(make_backtest_plot("theoretical",stop_levels=0.05,stop_type="SL")),height="10cm",width="10cm")}
+&
+\Sexpr{make_plot(plot(make_drawdown_plot("theoretical",stop_level=0.05)),height="10cm",width="10cm")}
+\\
+\Sexpr{make_plot(plot(make_sl_plot("theoretical",c("max_draw","median_draw"))),height="10cm",width="10cm")}
+&
+\Sexpr{make_plot(plot(make_sl_plot("theoretical",c("max_length","median_length"))),height="10cm",width="10cm")}
+\\
+\end{tabular}
+\end{center}
+
+
+
+\newpage
+\subsection{historical weights}
+
+<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
+
+
+@
+
+
+\begin{center}
+\begin{tabular}{l l}
+\hline
+\rowcolor{gray!20}
+\multicolumn{2}{c}{Portfolio composition} \\
+Zero Cost Call Spread Collars & 43 \% \\
+Zero Cost Put Spread Collars & 19 \% \\
+Zero Cost Risk Reversals & 7\% \\
+Zero Cost Put Spread Ratios & 15 \% \\
+Short Straddles & 16 \% \\
+\end{tabular}
+\end{center}
+
+\begin{center}
+\begin{tabular}{m{10cm} m{10cm}}
+\Sexpr{make_plot(plot(make_backtest_plot("historical",stop_levels=0.05,stop_type="SL")),height="10cm",width="10cm")}
+&
+\Sexpr{make_plot(plot(make_drawdown_plot("historical",stop_level=0.05)),height="10cm",width="10cm")}
+\\
+\Sexpr{make_plot(plot(make_sl_plot("historical",c("max_draw","median_draw"))),height="10cm",width="10cm")}
+&
+\Sexpr{make_plot(plot(make_sl_plot("historical",c("max_length","median_length"))),height="10cm",width="10cm")}
+\\
+\end{tabular}
+\end{center}
+
+
+
+\newpage
+\subsection{delta 1 teenies }
+
+<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
+
+
+@
+
+
+
+\begin{center}
+\begin{tabular}{m{10cm} m{10cm}}
+\Sexpr{make_plot(plot(make_backtest_plot("tail1",stop_levels=0.010,stop_type="TP")),height="10cm",width="10cm")}
+&
+\Sexpr{make_plot(plot(make_drawdown_plot("tail1")),height="10cm",width="10cm")}
+\\
+\Sexpr{make_plot(plot(make_sl_plot("tail1",c("max_draw","median_draw"))),height="10cm",width="10cm")}
+&
+\Sexpr{make_plot(plot(make_sl_plot("tail1",c("max_length","median_length"))),height="10cm",width="10cm")}
+\\
+\end{tabular}
+\end{center}
+
+
+\newpage
+\section{Drawdown mitigation: SPX ``teenies''}
+
+<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
+
+
+
+spx_tail1_backtest<-make_strategy(
+  strategy=strategy_TAIL1,
+  shedule_3m[market=="spx"],
+  all_vol[market=="spx"]
+)[,.SD,keyby=date]
+
+spx_tail2_backtest<-make_strategy(
+  strategy=strategy_TAIL2,
+  shedule_3m[market=="spx"],
+  all_vol[market=="spx"]
+)[,.SD,keyby=date]
+
+spx_tail5_backtest<-make_strategy(
+  strategy=strategy_TAIL5,
+  shedule_3m[market=="spx"],
+  all_vol[market=="spx"]
+)[,.SD,keyby=date]
+
+
+x<-merge(
+  x=spx_tail2_backtest,
+  y=dof,
+  by.x="date",
+  by.y="date"
+)
+
+g_tails<-rbind(
+  data.table(spx_tail1_backtest,delta="1"),
+  data.table(spx_tail2_backtest,delta="2"),
+  data.table(spx_tail5_backtest,delta="5")
+) %>% 
+  ggplot() +
+  geom_line(aes(x=date,y=pnl,col=delta),size=2,alpha=0.75)+
+  ggtitle("Tail hedges: 1, 2 and 5 deltas")
+
+g_tail2_vs_dof<-melt(merge(
+  x=spx_tail2_backtest,
+  y=dof,
+  by.x="date",
+  by.y="date"
+)[,.(
+  date,
+  teeny=cumsum(c(0,diff(pnl.x))),
+  dof=cumsum(c(0,diff(pnl.y)))
+)],id.vars = "date",measure.vars = c("teeny","dof")) %>% 
+  ggplot() +
+  geom_line(aes(x=date,y=value,col=variable),size=2,alpha=0.75)+
+  ggtitle("Quarterly rolling 2-delta SPX puts vs DOF")
+
+#
+#
+#
+dof_drawdown_stats <- compute_drawdown_stats(dof)[,.(
+  max_draw=round(100*max_draw[1],digits=2),
+  date_draw=date_draw[1],
+  date_start=date_start[1],
+  date_end=date_end[1]
+),keyby=episode][head(order(-max_draw),10)][date_end>date_start][,list(
+  max_draw=max_draw,
+  date_draw=as.character(date_draw,format="%Y-%m-%d"),
+  date_start=as.character(date_start,format="%Y-%m-%d"),
+  date_end=as.character(date_end,format="%Y-%m-%d"),
+  teeny1=round(100*spx_tail1_backtest[(date>date_start) & (date<date_draw),max(pnl-pnl[1])],digits=2),
+  teeny2=round(100*spx_tail2_backtest[(date>date_start) & (date<date_draw),max(pnl-pnl[1])],digits=2),
+  teeny5=round(100*spx_tail5_backtest[(date>date_start) & (date<date_draw),max(pnl-pnl[1])],digits=2)
+),keyby=episode]
+
+
+spx_tail1_backtest
+
+@
+
+\vskip 5mm
+
+\noindent Downside mitigation can be achieved using ``teenies'', i.e. very low delta puts (50 to 300 bps).
+These options almost never pay out anything at settlement. However, their value tends to spike during 
+market-wide bouts of liquidation. We can take advantage of this by holding some amount of these and
+selling them back whever their value spikes by a pre-determined amount. The combined portfolio should
+have smaller returns but much reduced drawdowns. The key to this risk-mitigation strategy is that
+we use a ``stop-profit'' on the tail-protection portfolio rather than a ``stop-loss'' on the risk-premium
+portfolio. The reason this works better than stop-losses is that volatility risk premia are very strongly 
+mean-reverting. It is better to buy tail-risk when the market is calm and then sell volatility on the pop 
+rather than stop-out the risk premium collection portfolio on the pop and buy the volatility highs.
+(tail risk becomes vol risk on a strong selloff, the teenies become 5-10 deltas pretty quickly)
+
+\vskip 5mm
+
+\begin{center}
+\Sexpr{make_plot(plot(g_tail2_vs_dof),height="20cm",width="20cm")}
+\end{center}
+
+\newpage
+
+\vskip 5mm
+
+We examine the performanse of a tail-risk hedge during the largest draw-down episodes
+
+\vskip 5mm
+
+\begin{center}
+\Sexpr{ntable(
+  df=dof_drawdown_stats[order(-max_draw)],
+  title="largest DOF drawdown episodes, optimum teeny performance"
+)}
+\end{center}
+
+\newpage
+
+\vskip 5mm
+
+\noindent The key metric for choosing a tail hedge is the ratio of premium to potential upside. We
+expect to rarely be able to recoup any of the premium, since tail options almost never end up paying
+out anything. From this viewpoint, lower delta options are the best choice. For the examples examined 
+in thise report, 1-delta SPX puts have the best ratio of premium to "price pop" during a selloff. 
+
+\vskip 5mm
+
+
+\begin{center}
+\Sexpr{make_plot(plot(g_tails),height="20cm",width="20cm")}
+\end{center}
+
+\newpage
+\section{All backtests}
+
+<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
+
+combined_backtest<-rbind(
+  data.table(weighted_strategy(weights$equal),weight="equal"),
+  data.table(weighted_strategy(weights$theoretical),weight="theoretical"),
+  data.table(weighted_strategy(weights$historical),weight="historical"),
+  data.table(weighted_strategy(weights$putspread),weight="putspread")
+)
+g_combined <- combined_backtest %>% 
+  ggplot() +
+  geom_line(aes(x=date,y=pnl,col=weight),size=2,alpha=0.75)+
+  ggtitle("All backtests")
+
+@
+
+
+\begin{center}
+\Sexpr{make_plot(plot(g_combined),height="20cm",width="20cm")}
+\end{center}
+
+\newpage
+\section{Strategies vs market backtests}
+
+\subsection{3m maturity}
+
+\begin{center}
+\scalebox{0.5}{
+\begin{tabular}{c c}
+\Sexpr{matrix2tabular(head(backtest_3m_plot_matrix,nrow(backtest_3m_plot_matrix)/2))}
+&
+\Sexpr{matrix2tabular(tail(backtest_3m_plot_matrix,nrow(backtest_3m_plot_matrix)/2))}
+\\
+\end{tabular}
+}
+\end{center}
+
+\newpage
+\subsection{6m (Jun, Dec) maturities}
+
+
+\begin{center}
+\scalebox{0.5}{
+\begin{tabular}{c c}
+\Sexpr{matrix2tabular(head(backtest_6m_a_plot_matrix,nrow(backtest_6m_a_plot_matrix)/2))}
+&
+\Sexpr{matrix2tabular(tail(backtest_6m_a_plot_matrix,nrow(backtest_6m_a_plot_matrix)/2))}
+\\
+\end{tabular}
+}
+\end{center}
+
+
+\newpage
+\subsection{6m (Mar, Sep) maturities}
+
+
+\begin{center}
+\scalebox{0.5}{
+\begin{tabular}{c c}
+\Sexpr{matrix2tabular(head(backtest_6m_b_plot_matrix,nrow(backtest_6m_b_plot_matrix)/2))}
+&
+\Sexpr{matrix2tabular(tail(backtest_6m_b_plot_matrix,nrow(backtest_6m_b_plot_matrix)/2))}
+\\
+\end{tabular}
+}
+\end{center}
+
+
+
+\newpage
+\section{Dataset}
+
+<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
+
+g_close<-shedule_3m %>% 
+  ggplot() +
+  geom_line(aes(x=date,y=close,col=market)) +
+  ggtitle("Market closing prices")
+
+g_vol<-shedule_3m %>% 
+  ggplot() +
+  geom_line(aes(x=date,y=vol,col=market)) +
+  ggtitle("Market average volatility")
+
+
+@
+
+
+We use historical volatility surfaces from JPM's OptionMetrics database. Average volatility,
+closing prices by market shown below. 
+
+\vskip 5mm
+
+\begin{tabular}{m{10cm}m{10cm}}
+\hline
+\Sexpr{make_plot(plot(g_close),height="10cm",width="10cm")}
+&
+\Sexpr{make_plot(plot(g_vol),height="10cm",width="10cm")}
+\end{tabular}
+
+\newpage
+\section{Backtest algorithm}
+
+<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
+@
+
+\subsection{backtest inputs}
+
+\noindent A backtest requires the following inputs:
+
+\vskip 5mm
+
+\begin{enumerate}
+\item volatility surface
+\item schedule
+\item payoff
+\end{enumerate}
+
+\vskip 5mm
+
+\subsection{volatility surface input}
+
+\vskip 5mm
+
+\noindent The volatility surface input is an R {\tt data.table} containing volatility
+marks for all markets, strikes and maturities. The data is stored in ``long format'', 
+so every volatility mark occupies a single row. The schema is as follows:
+
+\vskip 5mm
+
+\begin{center}
+\begin{tabular}{l l}
+\hline
+\rowcolor{gray!20}
+\multicolumn{2}{c}{ volatility surface} \\
+{\tt Date} & reval date \\
+{\tt Strike} & option strike \\
+{\tt Days} & option maturity \\
+{\tt ImpliedVol} & implied volatility \\
+{\tt ClosePrice} & closing price underlying \\
+{\tt market} & market name \\
+\end{tabular}
+\end{center}
+
+\vskip 5mm
+
+\subsection{shedule input}
+
+\vskip 5mm
+
+
+\noindent The schedule input is an R {\tt data.table} containing one row for each date
+and market we want bactested p\&l for. In addition to these data items, the shedule contains
+the market's close, the average volatility and the current roll period number, start date, 
+end date and days left. Options are assumed to expire on the last day of their respective 
+roll period.
+
+\vskip 5mm
+
+\begin{center}
+\begin{tabular}{l l}
+\hline
+\rowcolor{gray!20}
+\multicolumn{2}{c}{ shedule } \\
+{\tt date} & trading date  \\
+{\tt market} & market \\
+{\tt close } & closing price \\
+{\tt vol } & average vol across all strikes and maturities \\
+{\tt roll } & roll period \\
+{\tt start} & roll period starting date \\
+{\tt end} & roll period end date \\
+{\tt maturity} & days until end of current roll period \\
+\end{tabular}
+\end{center}
+
+\vskip 5mm
+
+\subsection{payoff input}
+
+\vskip 5mm
+
+\noindent the payoff is an R {\tt data.table} containing one row for each of the
+payoffs we intend to roll on each roll date. For each payoff, the table 
+contains a valuation model and a roll function. The valuation model is used
+to compute option values on each day in the roll period. The roll function is
+used to compute option strikes on roll dates. The valuation model is calld for
+each day in the shedule. The roll function is called only on roll period start days
+
+\vskip 5mm
+
+\begin{center}
+\begin{tabular}{l l}
+\hline
+\rowcolor{gray!20}
+\multicolumn{2}{c}{ payoff } \\
+model & {\tt function(spot,strike,maturity,rate,volatility)} \\
+strike & {\tt function(spot,volatility)} \\
+\end{tabular}
+\end{center}
+
+\newpage
+\subsection{backtest workflow}
+
+\vskip 5mm
+
+\begin{itemize}
+\item start with shedule
+\item (not vectorized) compute table of strikes for each roll date (date is equal to start of roll period)
+by calling roll function. Since roll dates are months appart, the roll function is called relatively
+infrequently and does not need to be optimized. 
+\item {\tt LEFT JOIN} option strikes on roll period. strikes are constant over the whole roll period. We use
+the {\tt data.table} {\bf X[Y]} idiom to achieve this, it is very fast.
+\item (vectorized) compuite maturity, strike pillars surrounding contract economics. We use the {\tt findInterval}
+function for this, which is very fast.
+\item {\tt LEFT JOIN} surface volatilities on surrounding pillars. {\tt data.table}'s {\bf X[Y]} idiom is used
+here too.
+\item (vectorized) perform biliear interpolation. This is done on the whole {\tt data.table} in one go since
+the biliear interpolation formula is vectorizeable.
+\item (vectorized) call valuation model, store reval. The model needs to support vectorized operation, there
+is a single call with vectors of spot, vol, maturity, strike and rate as inputs.
+\end{itemize}
+
+\vskip 5mm
+
+The calculations outlined are vectorizeable. This means that the backtest is quite fast. We can backtest
+a single option on a single market over a 20-year period in about 0.5 seconds. 
+
+\newpage
+\subsection{volatility interpolation}
+
+\vskip 5mm
+The {\tt interpolate\_vol} function takes a reval date, a strike and a maturity as inputs
+and performs volatility intepolation on a single-market volatility surface. This calculation
+needs to be performed for every day, every market and every strike in the strategy. This means
+that the number of interpolations can run into the hundreds of thousands .It is therefore
+really important to be as efficient as possible. This means we need to vectorize operations
+as much as we can. The calculation as shown works well for a single market. To do intepolation over 
+multiple markets (for example from a multi-market shedule), we will use the {\tt data.table} 
+{\bf keyby} feature to split the schedule by market and perform  the interpolation on every 
+subset separately, inside the {\tt data.table}'s {\bf J} expression.
+
+\lstset{
+language=R,
+numbers=left,
+basicstyle=\footnotesize\ttfamily,
+commentstyle=\itshape\color{purple!40!black},
+}   
+
+\begin{lstlisting}
+
+interpolate_vol<-function(date,strike,days,vsurf)
+{
+
+  # vector of strike pillars in vol surface
+  strikes<-sort(unique(vsurf$Strike))
+  
+  # vector of maturity pillars in vol surface
+  maturities<-sort(unique(vsurf$Days))
+  
+  # volatility surface pillars surrounding contract 
+  # strike and expiry days
+  option_dets<-data.table(
+    date=date,
+    lo_strike=strikes[findInterval(strike,strikes)],
+    hi_strike=strikes[findInterval(strike,strikes)+1],
+    lo_mat=maturities[findInterval(days,maturities)],
+    hi_mat=maturities[findInterval(days,maturities)+1]
+  )
+  
+  # left join lower left corner's volatility
+  vol_ll<-merge(
+    x=option_dets,
+    y=vsurf,
+    by.x=c("date","lo_strike","lo_mat"),
+    by.y=c("Date","Strike","Days")
+  )$ImpliedVol
+  
+  # left join higher left corner's volatility
+  vol_lh<-merge(
+    x=option_dets,
+    y=vsurf,
+    by.x=c("date","lo_strike","hi_mat"),
+    by.y=c("Date","Strike","Days")
+  )$ImpliedVol
+  
+  # left join right lower corner's volatility
+  vol_hl<-merge(
+    x=option_dets,
+    y=vsurf,
+    by.x=c("date","hi_strike","lo_mat"),
+    by.y=c("Date","Strike","Days")
+  )$ImpliedVol
+  
+  # left join right higher corner's volatility
+  vol_hh<-merge(
+    x=option_dets,
+    y=vsurf,
+    by.x=c("date","hi_strike","hi_mat"),
+    by.y=c("Date","Strike","Days")
+  )$ImpliedVol
+  
+  # coordinates of contract strike, expiry inside surrounding pillar points
+  t_strike<-(strike-option_dets$lo_strike)/(option_dets$hi_strike-option_dets$lo_strike)
+  t_mat<-(days-option_dets$lo_mat)/(option_dets$hi_mat-option_dets$lo_mat)
+  
+  # bilinear interpolation formula,
+  # result is vector of volatilities
+  rowSums(cbind(
+    vol_ll*(1-t_strike)*(1-t_mat),
+    vol_hl*(t_strike)*(1-t_mat),
+    vol_lh*(1-t_strike)*(t_mat),
+    vol_hh*(t_strike)*(t_mat)
+  ))
+  
+}
+
+\end{lstlisting}
+
+\newpage
+\subsection{Unit tests}
+<<,cache=FALSE, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results="hide">>=
+synthetic_vol<-data.table(expand.grid(
+  Date=seq(Sys.Date()-365,Sys.Date(),by=1),
+  Strike=seq(0,300,length.out=10),
+  Days=seq(0,700,length.out=10),
+  ClosePrice=100.0,
+  ImpliedVol=0.1,
+  market="synthetic",
+  market_count=1,
+  stringsAsFactors = FALSE
+))[,.SD,keyby=Date]
+
+synthetic_shedule<-make_roll_dates(
+  filter_list=listed_expiries_3m,
+  vsurfs=synthetic_vol
+)
+
+synthetic_95_call<-make_strategy(
+   strategy=list(
+      leg1=list(model=EC,strike=function(close,vol,maturity){ close*0.95 },weight=(+1))
+    ),
+    shedule=synthetic_shedule,
+    volsurf=synthetic_vol
+)
+
+synthetic_105_call<-make_strategy(
+   strategy=list(
+      leg1=list(model=EC,strike=function(close,vol,maturity){ close*1.05 },weight=(-1))
+    ),
+    shedule=synthetic_shedule,
+    volsurf=synthetic_vol
+)
+  
+g_synthetic_90_100_ps_backtest<-make_strategy(
+   strategy=list(
+      leg1=list(model=EP,strike=function(close,vol,maturity){ close*0.9 },weight=(+1)),
+      leg2=list(model=EP,strike=function(close,vol,maturity){ close*1.0 },weight=(-1))
+    ),
+    shedule=synthetic_shedule,
+    volsurf=synthetic_vol
+) %>% 
+ggplot() +
+geom_line(aes(x=date,y=pnl),size=2,alpha=0.75) +
+ggtitle("90-100 PS")
+
+g_synthetic_95_105_CS_backtest<-make_strategy(
+   strategy=list(
+      leg1=list(model=EC,strike=function(close,vol,maturity){ close*0.95 },weight=(+1)),
+      leg2=list(model=EC,strike=function(close,vol,maturity){ close*1.05 },weight=(-1))
+    ),
+    shedule=synthetic_shedule,
+    volsurf=synthetic_vol
+) %>% 
+ggplot() +
+geom_line(aes(x=date,y=pnl),size=2,alpha=0.75)+
+ggtitle("95-105 CS")
+
+g_synthetic_95_C_backtest<-make_strategy(
+   strategy=list(
+      leg1=list(model=EC,strike=function(close,vol,maturity){ close*0.95 },weight=(+1))
+    ),
+    shedule=synthetic_shedule,
+    volsurf=synthetic_vol
+) %>% 
+ggplot() +
+geom_line(aes(x=date,y=pnl),size=2,alpha=0.75)+
+ggtitle("Long 95 CALL")
+
+g_synthetic_105_C_backtest<-make_strategy(
+   strategy=list(
+      leg2=list(model=EC,strike=function(close,vol,maturity){ close*1.05 },weight=(-1))
+    ),
+    shedule=synthetic_shedule,
+    volsurf=synthetic_vol
+) %>% 
+ggplot() +
+geom_line(aes(x=date,y=pnl),size=2,alpha=0.75)+
+ggtitle("Short 105 CALL")
+
+x<-make_backtest(
+  shedule=synthetic_shedule,
+  volsurf=synthetic_vol,
+  model=EC,
+  strike_fun=function(close,vol,maturity){ close*0.95 }
+)
+
+y<-compute_option_premium(
+      shedule=synthetic_shedule,
+      all_vol=synthetic_vol,
+      strike_fun=function(close,vol,maturity){ close*0.95 },
+      model=EC
+)
+
+z<-merge(
+  x=synthetic_shedule[date==start,.(market, strike_close=close, strike_vol=vol, strike=close*0.95, roll)],
+  y=synthetic_shedule[,.(date,market,close,roll,maturity)],
+  by.x=c("market","roll"),
+  by.y=c("market","roll")
+)
+
+@
+
+\vskip 5mm
+
+\noindent We perform a number of backtests for selected strategies on synthetic data to ensure
+the backtest engine is working as expected. 
+
+\vskip 5mm
+
+\begin{center}
+\begin{tabular}{m{10cm} m{10cm}}
+\rowcolor{gray!20}
+\multicolumn{2}{c}{ Synthetic market, constant price at 100, constant vol at 10\% } 
+\\
+\Sexpr{make_plot(plot(g_synthetic_90_100_ps_backtest),height="10cm",width="10cm")}
+&
+\Sexpr{make_plot(plot(g_synthetic_95_105_CS_backtest),height="10cm",width="10cm")}
+\\
+\Sexpr{make_plot(plot(g_synthetic_95_C_backtest),height="10cm",width="10cm")}
+&
+\Sexpr{make_plot(plot(g_synthetic_105_C_backtest),height="10cm",width="10cm")}
+\\
+\end{tabular}
+\end{center}
+
+\begin{center}
+\begin{tabular}{m{10cm} m{10cm}}
+\rowcolor{gray!20}
+\multicolumn{2}{c}{ Synthetic market, constant price at 100, constant vol at 10\%, 25bp SL, TP } 
+\\
+\Sexpr{make_plot(plot(
+    plot_backtest(stop_loss(
+      synthetic_95_call,
+      max_loss=(-0.0025)
+    )[,pnl:=stopped_pnl])
+),height="10cm",width="10cm")}
+&
+\Sexpr{make_plot(plot(
+    plot_backtest(take_profit(
+      synthetic_105_call,
+      max_profit=(+0.0025)
+    )[,pnl:=stopped_pnl])
+),height="10cm",width="10cm")}
+\\
+\end{tabular}
+\end{center}
+
+\end{document}
+
+

@@ -134,7 +134,7 @@ make_sl_plot<-function(
   res %>%
   ggplot() +
   geom_line(aes(x=levels,y=value,col=variable),size=2,alpha=0.75) +
-  ggtitle(paste0(w,"-weight vs DOF drawdowns"))
+  ggtitle(paste0(w,"-weight drawdowns stats, max and median values"))
 }
 
 
@@ -183,7 +183,7 @@ make_backtest_plot<-function(
         date %in% dof$date,
         .(date,pnl=(pnl-pnl[1])*sd(diff(dof$pnl))/sd(diff(pnl)))
         ],
-      strategy=paste0("bkt_",round(abs(stop_level)*100,digits=0))
+      strategy=paste0("bkt_",stri_pad(round(abs(stop_level)*100,digits=0),width=3,side="left",pad="0"))
     ),
     stop_level=stop_levels,
     SIMPLIFY=FALSE
@@ -390,12 +390,18 @@ geom_line(aes(x=date,y=drawdown),size=2,col=ggcol(2)[2])
 \end{tabular}
 \end{center}
 
+\newpage
+
+\vskip 5mm
+
+\subsection{Tighter stops impact recovery times}
+
 \vskip 5mm
 
 \begin{center}
 \Sexpr{make_plot(plot(
   make_backtest_plot("equal",stop_levels=c(0.01,0.02,0.05,0.1,0.2),stop_type="SL",with_DOF=FALSE)
-),height="15cm",width="15cm")}
+),height="20cm",width="20cm")}
 \end{center}
 
 \newpage
@@ -438,7 +444,7 @@ quality_df<-do.call(rbind,mapply(function(sl_level){
   the_draw<-0.05
   data.table(
     sl_level=sl_level,
-    pnl=max(proxy_stats$whole_pnl)*sl_level/max(proxy_stats$max_draw)*365/strat_len,
+    pnl=max(proxy_stats$whole_pnl)*the_draw/max(proxy_stats$max_draw)*365/strat_len,
     sharpe=max(proxy_stats$whole_sharpe)
   )
 },
@@ -447,13 +453,17 @@ SIMPLIFY=FALSE
 ))
 
 g_quality_pnl<-quality_df %>% ggplot() + geom_line(aes(x=sl_level,y=pnl))+
-    ggtitle("DOF Proxy stop-loss level vs P&L")
+    ggtitle("DOF Proxy stop-loss level vs P&L normalized to a 5 pct draw")
 
 g_quality_sharpe<-quality_df %>% ggplot() + geom_line(aes(x=sl_level,y=sharpe))+
     ggtitle("DOF Proxy stop-loss level vs Sharpe")
 
 
 @
+
+\vskip 5mm
+
+Annualized returns, no funding
 
 \vskip 5mm
 
